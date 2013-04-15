@@ -1,0 +1,20 @@
+#
+# --- this is a more complicated scene with a triangle mesh model ---
+#
+
+image		diamond_test_render.png		500 500		1.0
+camera		8 5 20	0 -1 0	0 1 0	45.0
+
+light		point	-10 20 10	100 100 100
+light		point	10 20 10	100 100 200
+light		point	10 20 -10	200 150 50
+light		point	-10 2 -10	100 100 100
+
+# light		area	-10 20 10	1	2 2	 800 800 800
+
+material	glass	0 0 0			1 1 1		2.419
+shape		trimesh 	BigBrilliantDiamond.trimesh
+
+material	diffuse 0 0 0	1 1 1
+shape		plane	0 -8.5 0		0 1 0
+
