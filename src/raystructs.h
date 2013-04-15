@@ -5,6 +5,11 @@ typedef struct {
 	float r,g,b;
 } Color3f;
 
+//Represents a vector in 3D space
+typedef struct {
+	float x,y,z;
+} Vector3f;
+
 //A material. Contains color and light properties (reflective, transmissive, luminant)
 //Some of these values could probably be removed to speed up rendering
 typedef struct {
@@ -19,12 +24,7 @@ typedef struct {
 	float ior;				//Index of refraction
 } Material;
 
-//Represents a vector in 3D space
-typedef struct {
-	float x,y,z;
-} Vector3f;
-
-//A triangle defined by three points. Normal is included for OpenGL
+//A triangle defined by three points and a normal
 typedef struct {
 	//Three points of triangle
 	Vector3f p0,p1,p2;
