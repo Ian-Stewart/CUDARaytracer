@@ -16,12 +16,12 @@ typedef struct {
 	Color3f Ka;	//Ambient reflectance
 	Color3f Kd;	//Diffuse reflectance
 	Color3f Ks;	//Specular reflectance
-	Color3f Kr;		//Reflective color
-	Color3f Kt;		//Transmitive (refractive) color
-	Color3f Ie;		//Emissive color
+	Color3f Kr;	//Reflective color
+	Color3f Kt;	//Transmitive (refractive) color
+	Color3f Ie;	//Emissive color
 	
-	float phong_exp;	//Used to calculate specular (phong specular exponent)
-	float ior;				//Index of refraction
+	float phong_exp;//Used to calculate specular (phong specular exponent)
+	float ior;	//Index of refraction
 } Material;
 
 //A triangle defined by three points and a normal
