@@ -34,9 +34,6 @@
 int mouse_old_x;//Old mouse position
 int mouse_old_y;
 
-const unsigned int win_height = 480;//Window dimensions
-const unsigned int win_width = 640;
-
 Display 		*dpy;
 Window 			root;
 GLint att[] = 		{GLX_RGBA, GLX_DEPTH_SIZE,24,GLX_DOUBLEBUFFER, None};
@@ -50,7 +47,6 @@ XEvent 			xev;
 
 //Defined below main
 void setUpXScreen();
-void DrawAQuad();
 
 __global__ void test_vbo_kernel(Color3f *c){
 	c->r = 0;
@@ -76,6 +72,7 @@ int main(int argc, char *argv[]){
 	// Can map an OpenGL texture to CUDA using cudaGraphicsGLRegisterBuffer(). In CUDA, it appears as a device pointer and can be read and written by kernels or via cudaMemcpy() calls
 	// 
 	
+	glGenBuffers(1, positionsVBO);
 	
 	while(1){
 	XNextEvent(dpy, &xev);
@@ -83,7 +80,10 @@ int main(int argc, char *argv[]){
 	
 	if(xev.type == Expose) {
 		XGetWindowAttributes(dpy, win, &gwa);
-		glViewport(0, 0, gwa.width, gwa.height);
+		//glViewport(0, 0, gwa.width, gwa.height);
+		
+		
+		
 		glXSwapBuffers(dpy, win);
 	
 		
@@ -120,7 +120,7 @@ void setUpXScreen(){
 	swa.colormap = cmap;
 	swa.event_mask = ExposureMask | KeyPressMask;
 	
-	win = XCreateWindow(dpy, root, 0, 0, win_width, win_height, 0, vi->depth, InputOutput, vi->visual, CWColormap | CWEventMask, &swa);
+	win = XCreateWindow(dpy, root, 0, 0, 640, 480, 0, vi->depth, InputOutput, vi->visual, CWColormap | CWEventMask, &swa);
 	
 	XMapWindow(dpy, win);
 	XStoreName(dpy, win, "CUDA Ray Tracer - Ian Stewart & Alexander Newman");
