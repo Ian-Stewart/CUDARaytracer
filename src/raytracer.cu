@@ -5,15 +5,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+//Include X
+#include <X11/X.h>
+#include <X11/Xlib.h>
+
 //Include GLEW. Apparently this is supposed to come before gl.h and glfw.h
 #include <GL/glew.h>
 
 //Include GLFW
 #include <GL/glfw.h>
-
-//Include X
-#include <X11/X.h>
-#include <X11/Xlib.h>
 
 //Include other OpenGL
 #include <GL/gl.h>
@@ -39,7 +39,7 @@ Colormap 		cmap;
 XSetWindowAttributes 	swa;
 Window 			win;
 GLXContext 		glc;
-XwindowAttributes 	gwa;
+XWindowAttributes 	gwa;
 XEvent 			xev;
 
 //Defined below main
@@ -89,9 +89,9 @@ void setUpXScreen(){
 	cmap = XCreateColormap(dpy,root, vi->visual, AllocNone);
 	
 	swa.colormap = cmap;
-	swa.event_mask = exposureMask | KeyPressMask;
+	swa.event_mask = ExposureMask | KeyPressMask;
 	
-	win = XCreateWindow(dpy, root, 0, 0, win_width, win_height, InputOutput, vi->visual, CWColormap | CWEventMask, &swa);
+	win = XCreateWindow(dpy, root, 0, 0, win_height, win_width, 0, vi->depth, InputOutput, vi->visual, CWColormap | CWEventMask, &swa);
 	
 	XMapWindow(dpy, win);
 	XStoreName(dpy, win, "CUDA Ray Tracer - Ian Stewart & Alexander Newman");

@@ -51,6 +51,6 @@ typedef struct {
 //A triangle mesh
 //These are generated from .obj files
 typedef struct {
-	struct Material material;
-	struct TriArray array;
-} TriMesh
+	Material material;
+	TriArray array;
+} TriMesh;
