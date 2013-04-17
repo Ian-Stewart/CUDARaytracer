@@ -17,3 +17,5 @@ to this
 
     //#error -- unsupported GNU version! gcc 4.7 and up are not supported!
     #warning -- unsupported GNU version! gcc 4.7 and up are not supported!
+
+This probably isn't the best way to resolve this issue, but it seems to work well enough.
