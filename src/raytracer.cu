@@ -9,7 +9,7 @@
 #include <X11/X.h>
 #include <X11/Xlib.h>
 
-//Include GLEW. Apparently this is supposed to come before gl.h and glfw.h
+//Include GLEW
 #include <GL/glew.h>
 
 //Include GLFW
@@ -19,6 +19,12 @@
 #include <GL/gl.h>
 #include <GL/glx.h>
 #include <GL/glu.h>
+#include <GL/glut.h>
+
+//Include CUDA
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <cuda_gl_interop.h>
 
 //Include project headers
 #include "raytraceutils.h"
@@ -28,8 +34,8 @@
 int mouse_old_x;//Old mouse position
 int mouse_old_y;
 
-const unsigned int win_height = 640;//Window dimensions
-const unsigned int win_width = 480;
+const unsigned int win_height = 480;//Window dimensions
+const unsigned int win_width = 640;
 
 Display 		*dpy;
 Window 			root;
@@ -46,15 +52,38 @@ XEvent 			xev;
 void setUpXScreen();
 void DrawAQuad();
 
+__global__ void test_vbo_kernel(Color3f *c){
+	c->r = 0;
+	c->g = 0;
+	c->b = 0;
+}	
+
+void launch_raytrace_kernel(){
+
+}
+
 int main(int argc, char *argv[]){
 	setUpXScreen();
 	
+	//glutDisplayFunc(dpy);
+	
+	cudaGLSetGLDevice(0);//Assuming device 0 is the CUDA device
+	//See page 51 of the CUDA C programming guide...
+	
+	// Register rescource with CUDA
+	// map and unmap as many times as you want with cudaGraphicsMapResources() and cudaGraphicsUnmapResources()
+	// cudaGraphicsResourceSetmapFlags() can be used to specify write-only usage hints for optimizations
+	// Can map an OpenGL texture to CUDA using cudaGraphicsGLRegisterBuffer(). In CUDA, it appears as a device pointer and can be read and written by kernels or via cudaMemcpy() calls
+	// 
+	
+	
 	while(1){
 	XNextEvent(dpy, &xev);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	
 	if(xev.type == Expose) {
 		XGetWindowAttributes(dpy, win, &gwa);
 		glViewport(0, 0, gwa.width, gwa.height);
-		DrawAQuad(); 
 		glXSwapBuffers(dpy, win);
 	
 		
@@ -91,7 +120,7 @@ void setUpXScreen(){
 	swa.colormap = cmap;
 	swa.event_mask = ExposureMask | KeyPressMask;
 	
-	win = XCreateWindow(dpy, root, 0, 0, win_height, win_width, 0, vi->depth, InputOutput, vi->visual, CWColormap | CWEventMask, &swa);
+	win = XCreateWindow(dpy, root, 0, 0, win_width, win_height, 0, vi->depth, InputOutput, vi->visual, CWColormap | CWEventMask, &swa);
 	
 	XMapWindow(dpy, win);
 	XStoreName(dpy, win, "CUDA Ray Tracer - Ian Stewart & Alexander Newman");
@@ -99,26 +128,5 @@ void setUpXScreen(){
 	glc = glXCreateContext(dpy, vi, NULL, GL_TRUE);
 	glXMakeCurrent(dpy, win, glc);
 	
-	glEnable(GL_DEPTH_TEST);//May not need this for ray tracer	
+	//glEnable(GL_DEPTH_TEST);//May not need this for ray tracer	
 }//End setUpXScreen
-
-//Just a temporary thing. Will be replaced with code to draw objects
-//Drawing will be done by CUDA
-void DrawAQuad(){
-	glClearColor(1.0,1.0,1.0,1.0);
-	 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-	glMatrixMode(GL_PROJECTION);
-	glLoadIdentity();
-	glOrtho(-1., 1., -1., 1., 1., 20.);
-	glMatrixMode(GL_MODELVIEW);
-	glLoadIdentity();
-	gluLookAt(0., 0., 10., 0., 0., 0., 0., 1., 0.);
-
-	glBegin(GL_QUADS);
-		glColor3f(1., 0., 0.); glVertex3f(-.75, -.75, 0.);
-		glColor3f(0., 1., 0.); glVertex3f( .75, -.75, 0.);
-		glColor3f(0., 0., 1.); glVertex3f( .75,  .75, 0.);
-		glColor3f(1., 1., 0.); glVertex3f(-.75,  .75, 0.);
-	glEnd();
-}
