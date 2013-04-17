@@ -9,7 +9,7 @@ To compile
 
     nvcc raytracer.cu -lglut -lGL -lGLU -o ../bin/raytracer
 
-Note: nvcc does not like gcc 4.6+. To successfully compile, you will need to install an older version of gcc or modify your cuda host_config.h from this
+Note: nvcc does not like gcc 4.6+. To successfully compile, you will need to install an older version of gcc or modify your cuda host_config.h. To get nvcc to work, change the line
 
     #error -- unsupported GNU version! gcc 4.7 and up are not supported!
 
