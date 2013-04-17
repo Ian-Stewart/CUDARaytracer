@@ -21,10 +21,12 @@
 #include <GL/glu.h>
 
 //Include project headers
-#include <./raytraceutils.h>
-#include <./raystructs.h>
+#include "raytraceutils.h"
+#include "raystructs.h"
+#include "raytracer.h"
 
-int mouse_old_x, mouse_old_y;//Old mouse position
+int mouse_old_x;//Old mouse position
+int mouse_old_y;
 
 const unsigned int win_height = 640;//Window dimensions
 const unsigned int win_width = 480;
@@ -39,6 +41,10 @@ Window 			win;
 GLXContext 		glc;
 XwindowAttributes 	gwa;
 XEvent 			xev;
+
+//Defined below main
+void setUpXScreen();
+void DrawAQuad();
 
 int main(int argc, char *argv[]){
 	setUpXScreen();
@@ -74,7 +80,7 @@ void setUpXScreen(){
 	root = DefaultRootWindow(dpy);
 	vi = glXChooseVisual(dpy, 0,att);
 	if(vi == NULL){
-		printf("\n No appropriate visual found\n);
+		printf("\n No appropriate visual found\n");
 		exit(0);
 	} else {
 		printf("\n Visual %p selected \n", (void *)vi->visualid);
