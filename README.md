@@ -7,7 +7,7 @@ Not complete. Still in very early stages.
 
 To compile
 
-    nvcc ./src/raytracer.cu -lglut -lGL -lGLU -o ./bin/raytracer
+    nvcc ./src/raytracer.cu -o ./bin/raytracer -lSDL
 
 Note: nvcc does not like gcc 4.6+. To successfully compile, you will need to install an older version of gcc or modify your cuda host_config.h. To get nvcc to work, change the line
 
