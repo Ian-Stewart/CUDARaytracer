@@ -54,3 +54,23 @@ typedef struct {
 	Material material;
 	TriArray array;
 } TriMesh;
+
+//A plane
+//Defines an infinite plane
+typedef struct {
+	Vector3f P0;
+	Vector3f N;
+} Plane;
+
+//Hitrecord. Used upon intersection with an object in the scene
+typedef struct {
+	Material material;
+	Vector3f normal;
+	Vector3f pos;
+	float t;
+} HitRecord;
+
+typedef struct{
+	Vector3f pos;
+	Color3f intensity;
+} PointLight;

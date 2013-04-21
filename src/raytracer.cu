@@ -16,6 +16,7 @@
 #include "raytraceutils.h"
 #include "raystructs.h"
 #include "raytracer.h"
+#include "camera.h"
 
 #define WIDTH 	500
 #define HEIGHT 	500
