@@ -24,6 +24,7 @@
 
 int mouse_old_x;//Old mouse position
 int mouse_old_y;
+Camera camera;
 
 //Defined below main
 void DrawScreen(SDL_Surface* screen);

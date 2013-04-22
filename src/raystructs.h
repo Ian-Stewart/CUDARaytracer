@@ -74,3 +74,8 @@ typedef struct{
 	Vector3f pos;
 	Color3f intensity;
 } PointLight;
+
+typedef struct{
+	Vector3f o;
+	Vector3f d;
+} Ray;
