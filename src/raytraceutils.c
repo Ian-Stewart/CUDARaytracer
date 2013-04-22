@@ -2,6 +2,10 @@
 //Contains lots of functions related to structs defined in raystructs.h
 #include <Math.h>
 
+//Include structs and such
+#include "camera.h"
+#include "raystructs.h"
+
 #ifndef PI
 #define PI           3.14159265358979323846
 #endif
