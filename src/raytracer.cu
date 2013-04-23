@@ -1,5 +1,5 @@
 //Ian Stewart & Alexander Newman
-//CUDA/OpenGL ray tracer
+//CUDA/SDL ray tracer
 
 //Include standard headers
 #include <stdio.h>
