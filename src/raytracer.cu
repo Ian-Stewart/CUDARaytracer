@@ -79,13 +79,15 @@ int main(int argc, char *argv[]){
 	}
 	
 	while(!keypress){
-		printf("Calling Kernel\n");
+		//printf("Calling Kernel\n");
 		test_vbo_kernel<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, WIDTH, HEIGHT);//Run kernel
 		cudaDeviceSynchronize();//Wait for GPU to finish
-		printf("Kernel completed. Copying memory\n");
+		//printf("%s\n",cudaGetErrorString(cudaGetLastError()));
+		//printf("Kernel completed. Copying memory\n");
 		cudaMemcpy(h_CUDA_Output, d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT, cudaMemcpyDeviceToHost);
-		printf("Drawing screen\n\n");
+		//printf("Drawing screen\n\n");
 		DrawScreen(screen, (Color3f *)h_CUDA_Output);
+		//DrawScreen(screen);
 		while(SDL_PollEvent(&event)){
 			switch(event.type){
 				case SDL_QUIT:
@@ -106,7 +108,7 @@ int main(int argc, char *argv[]){
 __global__ void test_vbo_kernel(Color3f *CUDA_Output, int w, int h){
 	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
-	CUDA_Output[(j * w) + i].r = 0.5;
+	CUDA_Output[(j * w) + i].r = 0.1;
 	CUDA_Output[(j * w) + i].g = 0.25;
 	CUDA_Output[(j * w) + i].b = 0.75;
 }
@@ -121,12 +123,16 @@ void DrawScreen(SDL_Surface *screen, Color3f *CUDA_Output){
 	}
 	
 	
-	for(y = 0; y < screen->h;y++){
-		for(x = 0; x < screen->w;x++){
-			//setpixel(SDL_Surface, x, y, r, g, b)
+	for(y = 0; y < HEIGHT;y++){
+		for(x = 0; x < WIDTH;x++){
 			setpixel(screen, x, y, floatToUint(CUDA_Output[(x * WIDTH) + y].r), floatToUint(CUDA_Output[(x * WIDTH) + y].g), floatToUint(CUDA_Output[(x * WIDTH) + y].b));
 		}
 	}//End for(y..){
+		
+	if(SDL_MUSTLOCK(screen)){
+		SDL_UnlockSurface(screen);
+	}
+	SDL_Flip(screen);
 }
 
 //Converts float 0-1 to 0-255
@@ -258,12 +264,12 @@ void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_
 	VectorScale(&(camera->up), top-bottom);
 }
 
-void setpixel(SDL_Surface *screen, int x, int y, Uint8 r, Uint8 g, Uint8 b){
-    Uint32 *pixmem32;
-    Uint32 colour;  
- 
-    colour = SDL_MapRGB( screen->format, r, g, b );
-  
-    pixmem32 = (Uint32*) screen->pixels  + y + x;
-    *pixmem32 = colour;
+void setpixel(SDL_Surface *screen, int x, int iny, Uint8 r, Uint8 g, Uint8 b){
+	Uint32 *pixmem32;
+	Uint32 colour;  
+	int y = iny*HEIGHT;
+	colour = SDL_MapRGB( screen->format, r, g, b );
+
+	pixmem32 = (Uint32*) screen->pixels  + y + x;
+	*pixmem32 = colour;
 }
