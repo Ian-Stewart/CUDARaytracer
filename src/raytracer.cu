@@ -25,6 +25,10 @@
 #define PI           3.14159265358979323846
 #endif
 
+//CUDA functions
+//__host__ __device__ indicates a function that is run on both the GPU and CPU
+//__global__ indicates a CUDA kernel
+__global__ void test_vbo_kernel(Color3f *CUDA_Output, int w, int h);//Purely for testing CUDA color output
 __global__ void get_camera_rays(Ray *d_crays, Camera *d_camera, int width, int height);
 __host__ __device__ void VectorSub(Vector3f *v, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void ScaleAdd(Vector3f *v0, Vector3f *v1, Vector3f *v2, float s);
@@ -35,9 +39,10 @@ __host__ __device__ void Negate(Vector3f *v);
 __host__ __device__ void CrossProduct(Vector3f *out, Vector3f *v1, Vector3f *v2);
 
 //Defined below main
-void DrawScreen(SDL_Surface* screen);
+void DrawScreen(SDL_Surface *screen, Color3f *CUDA_Output);
 void setpixel(SDL_Surface *screen, int x, int y, Uint8 r, Uint8 g, Uint8 b);
 void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_at, float in_fovy, float ratio);
+unsigned int floatToUint(float f);
 
 
 int mouse_old_x;//Old mouse position
@@ -46,11 +51,17 @@ int width = WIDTH;
 int height = HEIGHT;
 
 Camera camera;
+void* d_CUDA_Output;//Device pointer for output
+void* h_CUDA_Output;//Host pointer for output
 
 int main(int argc, char *argv[]){
+	printf("Starting raytracer\n");
 	dim3 threadsPerBlock(20,20);//Number of threads per block
-	dim3 numBlocks(width/threadsPerBlock.x, height/threadsPerBlock.y);
+	dim3 numBlocks(WIDTH/threadsPerBlock.x, HEIGHT/threadsPerBlock.y);
 	
+	printf("Declaring array\n");
+	h_CUDA_Output = malloc(sizeof(Color3f) * WIDTH * HEIGHT);
+	cudaMalloc(&d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT);
 	
 	
 	SDL_Surface *screen;
@@ -68,7 +79,13 @@ int main(int argc, char *argv[]){
 	}
 	
 	while(!keypress){
-		DrawScreen(screen);
+		printf("Calling Kernel\n");
+		test_vbo_kernel<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, WIDTH, HEIGHT);//Run kernel
+		cudaDeviceSynchronize();//Wait for GPU to finish
+		printf("Kernel completed. Copying memory\n");
+		cudaMemcpy(h_CUDA_Output, d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT, cudaMemcpyDeviceToHost);
+		printf("Drawing screen\n\n");
+		DrawScreen(screen, (Color3f *)h_CUDA_Output);
 		while(SDL_PollEvent(&event)){
 			switch(event.type){
 				case SDL_QUIT:
@@ -85,10 +102,37 @@ int main(int argc, char *argv[]){
 	return 0;
 }
 
-__global__ void test_vbo_kernel(Color3f *c){
-	c->r = 0.5;
-	c->g = 0.5;
-	c->b = 0.5;
+//Test kernel for funsies
+__global__ void test_vbo_kernel(Color3f *CUDA_Output, int w, int h){
+	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
+	CUDA_Output[(j * w) + i].r = 0.5;
+	CUDA_Output[(j * w) + i].g = 0.25;
+	CUDA_Output[(j * w) + i].b = 0.75;
+}
+
+void DrawScreen(SDL_Surface *screen, Color3f *CUDA_Output){
+	int y = 0;
+	int x = 0;
+	if(SDL_MUSTLOCK(screen)){
+		if(SDL_LockSurface(screen)){
+			return;
+		}
+	}
+	
+	
+	for(y = 0; y < screen->h;y++){
+		for(x = 0; x < screen->w;x++){
+			//setpixel(SDL_Surface, x, y, r, g, b)
+			setpixel(screen, x, y, floatToUint(CUDA_Output[(x * WIDTH) + y].r), floatToUint(CUDA_Output[(x * WIDTH) + y].g), floatToUint(CUDA_Output[(x * WIDTH) + y].b));
+		}
+	}//End for(y..){
+}
+
+//Converts float 0-1 to 0-255
+unsigned int floatToUint(float f){
+	unsigned int u = (unsigned int)(f*255);
+	return u;
 }
 
 //Set up camera rays for ray tracer
@@ -120,7 +164,7 @@ out->y = -(v1->x * v2->z) - (v1->z * v2->x);
 out->z = (v1->x * v2->y) - (v1->y * v2->x);
 }
 
-//Negates a vector
+//Negates a vector v = -v
 __host__ __device__ void Negate(Vector3f *v){
 	v->x = -(v->x);
 	v->y = -(v->y);
@@ -134,14 +178,7 @@ __host__ __device__ void VectorScale(Vector3f *v, float s){
 	v->z = s*(v->z);
 }
 
-//sets v = v/|v|
-__host__ __device__ void VectorNormalize(Vector3f *v){
-	float magnitude = sqrtf((v->x * v->x) + (v->y * v->y) + (v->z * v->z));//Length of vector v
-	v->x = (v->x)/magnitude;
-	v->y = (v->y)/magnitude;
-	v->z = (v->z)/magnitude;
-}
-
+//Normalizes a vector (sets v = v/|v|)
 __host__ __device__ void Normalize(Vector3f *v){
 	float magnitude = sqrtf((v->x * v->x) + (v->y * v->y) + (v->z * v->z));//Length of vector v
 	v->x = (v->x)/magnitude;
@@ -177,23 +214,6 @@ __host__ __device__ void ScaleAdd(Vector3f *v0, Vector3f *v1, Vector3f *v2, floa
 	v0->x = v.x;
 	v0->y = v.y;
 	v0->z = v.z;
-}
-
-void DrawScreen(SDL_Surface* screen){
-	int y = 0;
-	int x = 0;
-	if(SDL_MUSTLOCK(screen)){
-		if(SDL_LockSurface(screen)){
-			return;
-		}
-	}
-	
-	for(y = 0; y < screen->h;y++){
-		for(x = 0; x < screen->w;x++){
-			//setpixel(SDL_Surface, x, y, r, g, b)
-			setpixel(screen, x, y, 127, 127, 127);
-		}
-	}//End for(y..){
 }
 
 void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_at, float in_fovy, float ratio){
