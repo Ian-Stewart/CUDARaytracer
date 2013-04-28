@@ -17,19 +17,24 @@
 #include "raystructs.h"
 #include "raytracer.h"
 
-#define WIDTH 	1000
-#define HEIGHT 	1000
-#define DEPTH 	32
-
 #ifndef PI
 #define PI           3.14159265358979323846
 #endif
+
+#define WIDTH 	1000
+#define HEIGHT 	1000
+#define DEPTH 	32
 
 //CUDA functions
 //__host__ __device__ indicates a function that is run on both the GPU and CPU
 //__global__ indicates a CUDA kernel
 __global__ void test_vbo_kernel(Color3f *CUDA_Output, int w, int h);//Purely for testing CUDA color output
-__global__ void get_camera_rays(Ray *d_crays, Camera *d_camera, int width, int height);
+__global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h);//This actually does the raytracing
+
+__device__ void getCameraRay(Ray *ray, Camera *d_camera, int w, int h, int i, int j);
+
+__host__ __device__ float VectorDot(Vector3f *v, Vector3f *u);
+
 __host__ __device__ void VectorSub(Vector3f *v, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void ScaleAdd(Vector3f *v0, Vector3f *v1, Vector3f *v2, float s);
 __host__ __device__ void InitVector(Vector3f *v, float ix, float iy, float iz);
@@ -37,13 +42,13 @@ __host__ __device__ void Normalize(Vector3f *v);
 __host__ __device__ void VectorScale(Vector3f *v, float s);
 __host__ __device__ void Negate(Vector3f *v);
 __host__ __device__ void CrossProduct(Vector3f *out, Vector3f *v1, Vector3f *v2);
+__host__ __device__ void PointOnRay(float t, Ray *ray, Vector3f *pos)
 
 //Defined below main
-void DrawScreen(SDL_Surface *screen, Color3f *CUDA_Output);
+void DrawScreen(SDL_Surface *screen);
 void setpixel(SDL_Surface *screen, int x, int y, Uint8 r, Uint8 g, Uint8 b);
 void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_at, float in_fovy, float ratio);
 unsigned int floatToUint(float f);
-
 
 int mouse_old_x;//Old mouse position
 int mouse_old_y;
@@ -52,17 +57,27 @@ int height = HEIGHT;
 
 Camera camera;
 void* d_CUDA_Output;//Device pointer for output
+void* d_camera;//Device camera pointer
 void* h_CUDA_Output;//Host pointer for output
 
 int main(int argc, char *argv[]){
-	printf("Starting raytracer\n");
 	dim3 threadsPerBlock(20,20);//Number of threads per block
 	dim3 numBlocks(WIDTH/threadsPerBlock.x, HEIGHT/threadsPerBlock.y);
 	
-	printf("Declaring array\n");
-	h_CUDA_Output = malloc(sizeof(Color3f) * WIDTH * HEIGHT);
-	cudaMalloc(&d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT);
+	h_CUDA_Output = malloc(sizeof(Color3f) * WIDTH * HEIGHT);//Allocate memory on host for output
+	cudaMalloc(&d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT);//Allocate memory on device for output
+	cudaMalloc(&d_camera, sizeof(Camera));//Allocate memory for camera on host
 	
+	//hard-coded camera, for now
+	Vector3f eye;
+	Vector3f at;
+	Vector3f up;
+	InitVector(&eye, -1, 0, 1);
+	InitVector(&at, 0, 0, 1);
+	InitVector(&up, 0,0,1);
+	initCamera(&camera, &eye, &up, &at, 45, 1);//Set up camera
+
+	cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
 	
 	SDL_Surface *screen;
 	SDL_Event event;
@@ -79,15 +94,14 @@ int main(int argc, char *argv[]){
 	}
 	
 	while(!keypress){
-		//printf("Calling Kernel\n");
-		test_vbo_kernel<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, WIDTH, HEIGHT);//Run kernel
+		//test_vbo_kernel<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, WIDTH, HEIGHT);//Run kernel
+		//Launch Kernel
+		raytrace<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, (Camera *)d_camera, WIDTH, HEIGHT);
+		
+		//printf("%s\n", cudaGetErrorString(cudaGetLastError()));
 		cudaDeviceSynchronize();//Wait for GPU to finish
-		//printf("%s\n",cudaGetErrorString(cudaGetLastError()));
-		//printf("Kernel completed. Copying memory\n");
-		cudaMemcpy(h_CUDA_Output, d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT, cudaMemcpyDeviceToHost);
-		//printf("Drawing screen\n\n");
-		DrawScreen(screen, (Color3f *)h_CUDA_Output);
-		//DrawScreen(screen);
+		cudaMemcpy(h_CUDA_Output, d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT, cudaMemcpyDeviceToHost);//Copy results of GPU kernel to host memory
+		DrawScreen(screen);//Update the screen
 		while(SDL_PollEvent(&event)){
 			switch(event.type){
 				case SDL_QUIT:
@@ -99,21 +113,102 @@ int main(int argc, char *argv[]){
 			}//End switch(event.type)
 		}//End while(SDL_PollEvent)
 	}//End while(!keypress)
-	
 	SDL_Quit();
 	return 0;
 }
 
-//Test kernel for funsies
-__global__ void test_vbo_kernel(Color3f *CUDA_Output, int w, int h){
+//Kernel that actually raytraces
+__global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h){
 	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
-	CUDA_Output[(j * w) + i].r = 0.1;
-	CUDA_Output[(j * w) + i].g = 0.25;
-	CUDA_Output[(j * w) + i].b = 0.75;
+	Ray cameraRay;
+	InitVector(&(cameraRay.d), 1, 0, 0);
+	getCameraRay(&cameraRay, (Camera *)d_camera,  w, h, i, j);
+	d_CUDA_Output[(j * w) + i].r = cameraRay.d.x;//(float)((j+c)%1000)/(float)w;//cameraRay.d.x;
+	d_CUDA_Output[(j * w) + i].g = cameraRay.d.y;//(float)((i+c)%1000)/(float)h;//cameraRay.d.y;
+	d_CUDA_Output[(j * w) + i].b = cameraRay.d.z;//(float)(c%1000)/(float)h;//cameraRay.d.z;
 }
 
-void DrawScreen(SDL_Surface *screen, Color3f *CUDA_Output){
+//Set up camera rays for ray tracer
+//d_crays is the memory where the camera rays will go
+//d_camera is the location of the camera struct in device memory
+__device__ void getCameraRay(Ray *ray, Camera *d_camera, int w, int h, int i, int j){
+	float x;
+	float y;
+	x = ((float)i)/((float)w);
+	y = ((float)j)/((float)h);
+	Vector3f direction;
+	InitVector(&direction, 0, 0, 0);
+	ScaleAdd(&direction, &(d_camera->across), &(d_camera->corner), x);
+	ScaleAdd(&direction, &(d_camera->up), &direction, y);
+	VectorSub(&direction, &direction, &(d_camera->center));
+	Normalize(&direction);
+	ray->o = d_camera->center;
+	ray->d = direction;
+}
+
+//Find the intersection of a sphere and a ray
+__device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float tmin, float tmax){
+	Vector3f v;
+	InitVector(&v, 
+		ray->o.x - sphere->center.x,
+		ray->o.y - sphere->center.y,
+		ray->o.z - sphere->center.z
+	);
+	
+	float B = 2*VectorDot(&v, &(ray->d));
+	float C = VectorDot(&v, &v) - (sphere->radius * sphere->radius);
+	float discriminant = sqrtf(B*B - 4*C);
+	if(discriminant < 0){//Ray does not intersect sphere
+		return 0;
+	} else {
+		float t1 = (-B + discriminant)/(2);
+		float t2 = (-B - discriminant)/(2);
+		if(t1 < tmin){
+			t1 = t2;
+		}
+		if(t2 < tmin){
+			t2 = t1;
+		}
+		//Now find smaller t
+		if(t1 <= t2{
+			hit->t = t1;
+		}
+		if(t2 < t1){
+			hit->t = t2;
+		}
+		
+		if(hit->t > tmax || hit->t < tmin){//Hit is out of bounds
+			return 0;
+		}
+		
+		PointOnRay(hit->t, ray, &(hit->pos));//Find the hitting point and set hit->pos to it
+		hit->material = sphere->material;//Set hit material
+		//Normal at hitting point P is (P-Center)/|(P-Center) or (P-Center) normalized
+		InitVector(&(hit->normal),
+			hit->pos.x - sphere->center.x,
+			hit->pos.y - sphere->center.y,
+			hit->pos.z - sphere->center.z,
+		);
+		Normalize(&(hit->normal));
+		return 1;
+	}//End else / if(discriminant < 0)
+	
+}
+
+//Find a point on a ray given some t and a ray
+__host__ __device__ void PointOnRay(float t, Ray *ray, Vector3f *pos){
+	pos->x = ray->o.x + (ray->d.x*t);
+	pos->y = ray->o.y + (ray->d.y*t);
+	pos->zx = ray->o.z + (ray->d.z*t);
+}
+
+//Find the dot product of a vector
+__host__ __device__ float VectorDot(Vector3f *v, Vector3f *u){
+	return (v->x * u->x) + (v->y * u->y) + (v->z * u->z);
+}
+
+void DrawScreen(SDL_Surface *screen){
 	int y = 0;
 	int x = 0;
 	if(SDL_MUSTLOCK(screen)){
@@ -122,10 +217,11 @@ void DrawScreen(SDL_Surface *screen, Color3f *CUDA_Output){
 		}
 	}
 	
+	Color3f *cudaout = (Color3f *)h_CUDA_Output;
 	
 	for(y = 0; y < HEIGHT;y++){
 		for(x = 0; x < WIDTH;x++){
-			setpixel(screen, x, y, floatToUint(CUDA_Output[(x * WIDTH) + y].r), floatToUint(CUDA_Output[(x * WIDTH) + y].g), floatToUint(CUDA_Output[(x * WIDTH) + y].b));
+			setpixel(screen, x, y, floatToUint(cudaout[(x * WIDTH) + y].r), floatToUint(cudaout[(x * WIDTH) + y].g), floatToUint(cudaout[(x * WIDTH) + y].b));
 		}
 	}//End for(y..){
 		
@@ -141,26 +237,14 @@ unsigned int floatToUint(float f){
 	return u;
 }
 
-//Set up camera rays for ray tracer
-//d_crays is the memory where the camera rays will go
-//d_camera is the location of the camera struct in device memory
-__global__ void get_camera_rays(Ray *d_crays, Camera *d_camera, int w, int h){
+//Test kernel for debugging
+__global__ void test_vbo_kernel(Color3f *CUDA_Output, int w, int h){
 	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
-	float x;
-	float y;
-	x = ((float)i)/((float)w);
-	y = ((float)j)/((float)h);
-	Vector3f direction;
-	InitVector(&direction, 0, 0, 0);
-	ScaleAdd(&direction, &(d_camera->across), &(d_camera->corner), x);
-	ScaleAdd(&direction, &(d_camera->up), &direction, y);
-	VectorSub(&direction, &direction, &(d_camera->center));
-	Normalize(&direction);
-	d_crays[(j*w) + i].o = d_camera->center;
-	d_crays[(j*w) + i].d = direction;
+	CUDA_Output[(j * w) + i].r = 0.1;
+	CUDA_Output[(j * w) + i].g = 0.25;
+	CUDA_Output[(j * w) + i].b = 0.75;
 }
-
 
 //Compute the cross product of a vector
 //v1 x v2 = |{{i,j,k},{v1.x,v1.y,v1.z},{v2.x,v2.y,v2.z}}|
