@@ -58,8 +58,9 @@ typedef struct {
 //A plane
 //Defines an infinite plane
 typedef struct {
-	Vector3f P0;
-	Vector3f N;
+	Vector3f p;
+	Vector3f normal;
+	Material material;
 } Plane;
 
 //Hitrecord. Used upon intersection with an object in the scene
