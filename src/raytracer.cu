@@ -29,7 +29,7 @@
 //__host__ __device__ indicates a function that is run on both the GPU and CPU
 //__global__ indicates a CUDA kernel
 __global__ void test_vbo_kernel(Color3f *CUDA_Output, int w, int h);//Purely for testing CUDA color output
-__global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h);//This actually does the raytracing
+__global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h, int c);//This actually does the raytracing
 
 __host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float y);
 __host__ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float *tmin, float *tmax);
@@ -76,8 +76,8 @@ int main(int argc, char *argv[]){
 	Vector3f eye;
 	Vector3f at;
 	Vector3f up;
-	InitVector(&eye, -1, 0, 1);
-	InitVector(&at, 0, 0, 1);
+	InitVector(&eye, -1, 0, 0);
+	InitVector(&at, 0, 0, 0);
 	InitVector(&up, 0,0,1);
 	initCamera(&camera, &eye, &up, &at, 45, 1);//Set up camera
 
@@ -87,6 +87,7 @@ int main(int argc, char *argv[]){
 	SDL_Event event;
 	
 	int keypress = 0;
+	int c = 0;//For basic animation
 	
 	if(SDL_Init(SDL_INIT_VIDEO) < 0){
 		return 1;
@@ -96,34 +97,9 @@ int main(int argc, char *argv[]){
 		SDL_Quit();
 		return 1;
 	}
-	/*
-	//For testing purposes. Remove from final code.
-	Sphere testSphere;
-	InitVector(&(testSphere.center), 0.1, 0.25, 0.5);
-	testSphere.radius = 1;
-	//Plane testPlane;
-	//InitVector(&(testPlane.p), 0, 0, -3);
-	//InitVector(&(testPlane.normal), 0, 0, 1);
-	Material testMaterial;
-	//testPlane.material = testMaterial;
-	testSphere.material = testMaterial;
-	Ray ray;
-	InitVector(&(ray.d), 0,0,-1);
-	InitVector(&(ray.o), 0,0,3);
-	HitRecord hit;
-	printf("%i \n",sphereIntersect(&testSphere, &ray, &hit, 0, 100));
-	printf("Hit Normal: %f, %f, %f\n", hit.normal.x, hit.normal.y, hit.normal.z);
-	printf("t=%f pos=%f,%f,%f\n=======================\n", hit.t, hit.pos.x, hit.pos.y, hit.pos.z);
-	printf("Testing PointOnRay\n");
-	Vector3f pos;
-	PointOnRay(hit.t, &ray, &pos);
-	printf("%f,%f,%f\n--------------------\n", pos.x, pos.y, pos.z);
-	return 1;
-	*/
 	while(!keypress){
-		//test_vbo_kernel<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, WIDTH, HEIGHT);//Run kernel
 		//Launch Kernel
-		raytrace<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, (Camera *)d_camera, WIDTH, HEIGHT);
+		raytrace<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, (Camera *)d_camera, WIDTH, HEIGHT, c++);
 		
 		//printf("%s\n", cudaGetErrorString(cudaGetLastError()));
 		cudaDeviceSynchronize();//Wait for GPU to finish
@@ -145,12 +121,11 @@ int main(int argc, char *argv[]){
 }
 
 //Kernel that actually raytraces
-__global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h){
+__global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h, int c){
 	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
 	Ray cameraRay;
 	InitVector(&(cameraRay.d), 1, 0, 0);
-	//getCameraRay(&cameraRay, (Camera *)d_camera,  w, h, i, j);
 	float x;
 	float y; //(x,y) is the coordinate for this point in the image such that 0<=x,y<=1
 	
@@ -160,24 +135,16 @@ __global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h)
 	
 	//For testing purposes. Remove from final code.
 	Sphere testSphere;
-	InitVector(&(testSphere.center), 5, 0, 0);
+	InitVector(&(testSphere.center), 3 + ((float) c / 50), 0, 0);
 	testSphere.radius = 1;
 	
 	Plane testPlane;
-	InitVector(&(testPlane.p), 10, 0, 0);
-	InitVector(&(testPlane.normal), -1, 0, 0);
+	InitVector(&(testPlane.p), 8, 1, 1);
+	InitVector(&(testPlane.normal), -1, -0.75, -0.5);
+	Normalize(&(testPlane.normal));
 	//Normalize(&(testPlane.normal));
 	
 	Material testMaterial;
-	//InitColor(&(testMaterial.Ka), 0, 0, 0);
-	//InitColor(&(testMaterial.Kd), 0, 0, 0);
-	//InitColor(&(testMaterial.Ks), 0, 0, 0);
-	//InitColor(&(testMaterial.Kr), 0.5, 0.5, 0.5);
-	//InitColor(&(testMaterial.Kt), 0.95, 0.95, 0.95);
-	//InitColor(&(testMaterial.Ie), 0, 0, 0);
-	//testMaterial.phong_exp = 20;
-	//testMaterial.ior = 1.5;//Roughly equal to glass
-	
 	testPlane.material = testMaterial;
 	testSphere.material = testMaterial;
 	
@@ -185,7 +152,7 @@ __global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h)
 	float tmax = 1000;
 	HitRecord hit;
 
-	d_CUDA_Output[(j * w) + i].r = 1;
+	d_CUDA_Output[(j * w) + i].r = 0;
 	d_CUDA_Output[(j * w) + i].g = 0;
 	d_CUDA_Output[(j * w) + i].b = 0;
 	
@@ -271,7 +238,7 @@ __host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float
 //Find the intersection of a ray and plane, if it exists
 __host__ __device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, float *tmin, float *tmax){
 	Vector3f temp;
-	InitVector(&temp, 0,0,0);
+	InitVector(&temp, plane->p.x,plane->p.y,plane->p.z);
 	VectorSub(&temp, &temp, &(ray->o));
 	float denom = VectorDot(&(ray->d), &(plane->normal));
 	if(denom == 0){//Ray is parallel to plane
@@ -289,7 +256,7 @@ __host__ __device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, f
 	return 1;
 }
 
-//Find a point on a ray given some t and a ray
+//Find a point on a ray given some t and a ray and load that point into pos
 __host__ __device__ void PointOnRay(float t, Ray *ray, Vector3f *pos){
 	pos->x = ray->o.x + (ray->d.x*t);
 	pos->y = ray->o.y + (ray->d.y*t);
