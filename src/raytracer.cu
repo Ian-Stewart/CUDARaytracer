@@ -31,14 +31,14 @@
 __global__ void test_vbo_kernel(Color3f *CUDA_Output, int w, int h);//Purely for testing CUDA color output
 __global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h);//This actually does the raytracing
 
-__device__ void getCameraRay(Ray *ray, Camera *d_camera, int w, int h, int i, int j);
-__device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float tmin, float tmax);
-__device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, float tmin, float tmax);
+__host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float y);
+__host__ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float *tmin, float *tmax);
+__host__ __device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, float *tmin, float *tmax);
 
 __host__ __device__ float VectorDot(Vector3f *v, Vector3f *u);
 
 __host__ __device__ void VectorSub(Vector3f *v, Vector3f *v1, Vector3f *v2);
-__host__ __device__ void ScaleAdd(Vector3f *v0, Vector3f *v1, Vector3f *v2, float s);
+__host__ __device__ void ScaleAdd(Vector3f *v0, float s, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void InitVector(Vector3f *v, float ix, float iy, float iz);
 __host__ __device__ void InitColor(Color3f *c, float ir, float ig, float ib);
 __host__ __device__ void Normalize(Vector3f *v);
@@ -96,7 +96,30 @@ int main(int argc, char *argv[]){
 		SDL_Quit();
 		return 1;
 	}
-	
+	/*
+	//For testing purposes. Remove from final code.
+	Sphere testSphere;
+	InitVector(&(testSphere.center), 0.1, 0.25, 0.5);
+	testSphere.radius = 1;
+	//Plane testPlane;
+	//InitVector(&(testPlane.p), 0, 0, -3);
+	//InitVector(&(testPlane.normal), 0, 0, 1);
+	Material testMaterial;
+	//testPlane.material = testMaterial;
+	testSphere.material = testMaterial;
+	Ray ray;
+	InitVector(&(ray.d), 0,0,-1);
+	InitVector(&(ray.o), 0,0,3);
+	HitRecord hit;
+	printf("%i \n",sphereIntersect(&testSphere, &ray, &hit, 0, 100));
+	printf("Hit Normal: %f, %f, %f\n", hit.normal.x, hit.normal.y, hit.normal.z);
+	printf("t=%f pos=%f,%f,%f\n=======================\n", hit.t, hit.pos.x, hit.pos.y, hit.pos.z);
+	printf("Testing PointOnRay\n");
+	Vector3f pos;
+	PointOnRay(hit.t, &ray, &pos);
+	printf("%f,%f,%f\n--------------------\n", pos.x, pos.y, pos.z);
+	return 1;
+	*/
 	while(!keypress){
 		//test_vbo_kernel<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, WIDTH, HEIGHT);//Run kernel
 		//Launch Kernel
@@ -127,92 +150,63 @@ __global__ void raytrace(Color3f *d_CUDA_Output, Camera *d_camera, int w, int h)
 	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
 	Ray cameraRay;
 	InitVector(&(cameraRay.d), 1, 0, 0);
-	getCameraRay(&cameraRay, (Camera *)d_camera,  w, h, i, j);
+	//getCameraRay(&cameraRay, (Camera *)d_camera,  w, h, i, j);
+	float x;
+	float y; //(x,y) is the coordinate for this point in the image such that 0<=x,y<=1
+	
+	x = (float) i/ (float) w;
+	y = (float) j/ (float) h;
+	getCameraRay(&cameraRay, (Camera *) d_camera, x, y);//Get the camera ray
 	
 	//For testing purposes. Remove from final code.
 	Sphere testSphere;
-	InitVector(&(testSphere.center), 0, 0, 1);
+	InitVector(&(testSphere.center), 5, 0, 0);
 	testSphere.radius = 1;
 	
 	Plane testPlane;
-	InitVector(&(testPlane.p), 0, 0, -3);
-	InitVector(&(testPlane.normal), 0, 0, 1);
+	InitVector(&(testPlane.p), 10, 0, 0);
+	InitVector(&(testPlane.normal), -1, 0, 0);
+	//Normalize(&(testPlane.normal));
 	
 	Material testMaterial;
-	InitColor(&(testMaterial.Ka), 0, 0, 0);
-	InitColor(&(testMaterial.Kd), 0, 0, 0);
-	InitColor(&(testMaterial.Ks), 0, 0, 0);
-	InitColor(&(testMaterial.Kr), 0.5, 0.5, 0.5);
-	InitColor(&(testMaterial.Kt), 0.95, 0.95, 0.95);
-	InitColor(&(testMaterial.Ie), 0, 0, 0);
-	testMaterial.phong_exp = 20;
+	//InitColor(&(testMaterial.Ka), 0, 0, 0);
+	//InitColor(&(testMaterial.Kd), 0, 0, 0);
+	//InitColor(&(testMaterial.Ks), 0, 0, 0);
+	//InitColor(&(testMaterial.Kr), 0.5, 0.5, 0.5);
+	//InitColor(&(testMaterial.Kt), 0.95, 0.95, 0.95);
+	//InitColor(&(testMaterial.Ie), 0, 0, 0);
+	//testMaterial.phong_exp = 20;
+	//testMaterial.ior = 1.5;//Roughly equal to glass
 	
 	testPlane.material = testMaterial;
 	testSphere.material = testMaterial;
 	
-	float ior = 1.5;//Roughly equal to glass
 	float tmin = 0.001;
-	float tmax = 10000;
+	float tmax = 1000;
 	HitRecord hit;
 
-	d_CUDA_Output[(j * w) + i].r = 0;
-	d_CUDA_Output[(j * w) + i].g = 0.1;
-	d_CUDA_Output[(j * w) + i].b = 0.1;
+	d_CUDA_Output[(j * w) + i].r = 1;
+	d_CUDA_Output[(j * w) + i].g = 0;
+	d_CUDA_Output[(j * w) + i].b = 0;
 	
-	if(sphereIntersect(&testSphere, &cameraRay, &hit, tmin, tmax) == 1){//Ray hit sphere
+	if(sphereIntersect(&testSphere, &cameraRay, &hit, &tmin, &tmax) == 1){//Ray hit sphere
 		tmax = hit.t;//Update t
-		d_CUDA_Output[(j * w) + i].r = 0;//hit.normal.x;
-		d_CUDA_Output[(j * w) + i].g = 0;//hit.normal.y;
-		d_CUDA_Output[(j * w) + i].b = 0;//hit.normal.z;
+		//d_CUDA_Output[(j * w) + i].g = 1;
+		d_CUDA_Output[(j * w) + i].r = (hit.normal.x);
+		d_CUDA_Output[(j * w) + i].g = (hit.normal.y);
+		d_CUDA_Output[(j * w) + i].b = (hit.normal.z);
 	}
-	if(planeIntersect(&testPlane, &cameraRay, &hit, tmin, tmax) == 1){//Ray hit plane
+	if(planeIntersect(&testPlane, &cameraRay, &hit, &tmin, &tmax) == 1){//Ray hit plane
 		tmax = hit.t;//Update t
-		d_CUDA_Output[(j * w) + i].r = 0;//hit.normal.x;
-		d_CUDA_Output[(j * w) + i].g = 0;//hit.normal.y;
-		d_CUDA_Output[(j * w) + i].b = 0;//hit.normal.z;
+		//d_CUDA_Output[(j * w) + i].b = 1;
+		d_CUDA_Output[(j * w) + i].r = (hit.normal.x);
+		d_CUDA_Output[(j * w) + i].g = (hit.normal.y);
+		d_CUDA_Output[(j * w) + i].b = (hit.normal.z);
 	}
 }
 
-//Set up camera rays for ray tracer
-//d_crays is the memory where the camera rays will go
-//d_camera is the location of the camera struct in device memory
-__device__ void getCameraRay(Ray *ray, Camera *d_camera, int w, int h, int i, int j){
-	float x;
-	float y;
-	x = ((float)i)/((float)w);
-	y = ((float)j)/((float)h);
-	Vector3f direction;
-	InitVector(&direction, 0, 0, 0);
-	ScaleAdd(&direction, &(d_camera->across), &(d_camera->corner), x);
-	ScaleAdd(&direction, &(d_camera->up), &direction, y);
-	VectorSub(&direction, &direction, &(d_camera->center));
-	Normalize(&direction);
-	ray->o = d_camera->center;
-	ray->d = direction;
-}
-
-__device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, float tmin, float tmax){
-	Vector3f temp;
-	InitVector(&temp, 0,0,0);
-	VectorSub(&temp, &temp, &(ray->o));
-	float denom = VectorDot(&(ray->d), &(plane->normal));
-	if(denom == 0){//Ray is parallel to plane
-		return 0;
-	}
-	float t = VectorDot(&temp, &(plane->normal)) / denom;
-	if(t < tmin || t > tmax){//Hit is out of bounds
-		return 0;
-	}
-	PointOnRay(t, ray, &(hit->pos));//Find the intersection point
-	hit->t = t;
-	hit->material = plane->material;//Set material of hit
-	hit->normal = plane->normal;//Normal is always the same
-	Normalize(&(hit->normal));//Should be normalized. Can't assume though...
-	return 1;
-}
-
-//Find the intersection of a sphere and a ray
-__device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float tmin, float tmax){
+//Find the intersection of a sphere and a ray, if it exists
+__host__ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float *tmin, float *tmax){
 	Vector3f v;
 	InitVector(&v, 
 		ray->o.x - sphere->center.x,
@@ -228,10 +222,10 @@ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float t
 	} else {
 		float t1 = (-B + discriminant)/(2);
 		float t2 = (-B - discriminant)/(2);
-		if(t1 < tmin){
+		if(t1 < *tmin){
 			t1 = t2;
 		}
-		if(t2 < tmin){
+		if(t2 < *tmin){
 			t2 = t1;
 		}
 		//Now find smaller t
@@ -242,7 +236,7 @@ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float t
 			hit->t = t2;
 		}
 		
-		if(hit->t > tmax || hit->t < tmin){//Hit is out of bounds
+		if(hit->t > *tmax || hit->t < *tmin){//Hit is out of bounds
 			return 0;
 		}
 		
@@ -258,6 +252,41 @@ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float t
 		return 1;
 	}//End else / if(discriminant < 0)
 	
+}
+
+//Set up camera rays for ray tracer
+//d_crays is the memory where the camera rays will go
+//d_camera is the location of the camera struct in device memory
+__host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float y){
+	Vector3f direction;
+	InitVector(&direction, 0, 0, 0);
+	ScaleAdd(&direction, x, &(d_camera->across), &(d_camera->corner));
+	ScaleAdd(&direction, y, &(d_camera->up), &direction);
+	VectorSub(&direction, &direction, &(d_camera->center));
+	Normalize(&direction);
+	ray->o = d_camera->center;
+	ray->d = direction;
+}
+
+//Find the intersection of a ray and plane, if it exists
+__host__ __device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, float *tmin, float *tmax){
+	Vector3f temp;
+	InitVector(&temp, 0,0,0);
+	VectorSub(&temp, &temp, &(ray->o));
+	float denom = VectorDot(&(ray->d), &(plane->normal));
+	if(denom == 0){//Ray is parallel to plane
+		return 0;
+	}
+	float t = VectorDot(&temp, &(plane->normal)) / denom;
+	if(t < *tmin || t > *tmax){//Hit is out of bounds
+		return 0;
+	}
+	PointOnRay(t, ray, &(hit->pos));//Find the intersection point
+	hit->t = t;
+	hit->material = plane->material;//Set material of hit
+	hit->normal = plane->normal;//Normal is always the same
+	Normalize(&(hit->normal));//Should be normalized. Can't assume though...
+	return 1;
 }
 
 //Find a point on a ray given some t and a ray
@@ -297,7 +326,7 @@ void DrawScreen(SDL_Surface *screen){
 
 //Converts float 0-1 to 0-255
 unsigned int floatToUint(float f){
-	unsigned int u = (unsigned int)(f*255);
+	unsigned int u = (int)(f*255);
 	return u;
 }
 
@@ -313,7 +342,7 @@ __global__ void test_vbo_kernel(Color3f *CUDA_Output, int w, int h){
 //Compute the cross product of a vector
 //v1 x v2 = |{{i,j,k},{v1.x,v1.y,v1.z},{v2.x,v2.y,v2.z}}|
 __host__ __device__ void CrossProduct(Vector3f *out, Vector3f *v1, Vector3f *v2){
-out->x = (v1->y * v2->z) - (v1->z * v2->z);
+out->x = (v1->y * v2->z) - (v1->z * v2->y);
 out->y = -(v1->x * v2->z) - (v1->z * v2->x);
 out->z = (v1->x * v2->y) - (v1->y * v2->x);
 }
@@ -334,7 +363,7 @@ __host__ __device__ void VectorScale(Vector3f *v, float s){
 
 //Normalizes a vector (sets v = v/|v|)
 __host__ __device__ void Normalize(Vector3f *v){
-	float magnitude = sqrtf((v->x * v->x) + (v->y * v->y) + (v->z * v->z));//Length of vector v
+	float magnitude = sqrtf( pow(v->x,2) + pow(v->y,2) + pow(v->z,2) );//Length of vector v
 	v->x = (v->x)/magnitude;
 	v->y = (v->y)/magnitude;
 	v->z = (v->z)/magnitude;
@@ -362,7 +391,7 @@ __host__ __device__ void InitColor(Color3f *c, float ir, float ig, float ib){
 }
 
 //scaleadd v = s*v1 + v2
-__host__ __device__ void ScaleAdd(Vector3f *v0, Vector3f *v1, Vector3f *v2, float s){
+__host__ __device__ void ScaleAdd(Vector3f *v0, float s, Vector3f *v1, Vector3f *v2){
 	Vector3f v;
 	v.x = s*(v1->x);
 	v.y = s*(v1->y);
@@ -390,10 +419,9 @@ void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_
 	float top = dist * (tanf((camera->fovy * PI)/360));
 	float bottom = -top;
 	float right = ratio*top;
-	float left = right;
+	float left = -right;
 	
 	Vector3f gaze;
-	InitVector(&gaze, 0, 0, 0);
 	VectorSub(&gaze, &(camera->at), &(camera->eye));//gaze = at-eye
 	
 	camera->center = camera->eye;
@@ -408,9 +436,9 @@ void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_
 	CrossProduct(&V, &W, &U);
 	
 	InitVector(&(camera->corner), 0, 0, 0);
-	ScaleAdd(&(camera->corner), &U, &(camera->center), left);
-	ScaleAdd(&(camera->corner), &V, &(camera->corner), bottom);
-	ScaleAdd(&(camera->corner), &W, &(camera->corner), -dist);
+	ScaleAdd(&(camera->corner), left, &U, &(camera->center));
+	ScaleAdd(&(camera->corner), bottom, &V, &(camera->corner));
+	ScaleAdd(&(camera->corner), -dist, &W, &(camera->corner));
 	
 	InitVector(&(camera->across),U.x, U.y, U.z);
 	VectorScale(&(camera->across), right-left);
