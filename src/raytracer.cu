@@ -1,36 +1,29 @@
 //Ian Stewart & Alexander Newman
 //CUDA/SDL ray tracer
 
-//Include standard headers
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-//Include X
 #include <X11/X.h>
 #include <X11/Xlib.h>
-//Include SDL
 #include <SDL/SDL.h>
-//Include CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
-//Include project headers
 #include "raystructs.h"
 #include "raytracer.h"
 
 #ifndef PI
 #define PI           3.14159265358979323846
 #endif
+#define WIDTH 		1000
+#define HEIGHT 		1000
+#define DEPTH 		32
+#define MAX_DEPTH	5
 
-#define WIDTH 	1000
-#define HEIGHT 	1000
-#define DEPTH 	32
-
-//CUDA functions
 //__host__ __device__ indicates a function that is run on both the GPU and CPU
 //__global__ indicates a CUDA kernel
 __global__ void raytrace(Color3f *d_CUDA_Output, Scene *d_scene, int w, int h, int c);//This actually does the raytracing
 
-__host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float y);
 __host__ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float tmin, float tmax);
 __host__ __device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, float tmin, float tmax);
 __host__ __device__ int intersectScene(Scene *scene, Ray *ray, HitRecord *hit, float tmin, float tmax);
@@ -42,30 +35,32 @@ __host__ __device__ float findDeterminant(Vector3f *col0, Vector3f *col1, Vector
 __host__ __device__ inline void InitVector(Vector3f *v, float ix, float iy, float iz);
 __host__ __device__ inline void InitColor(Color3f *c, float ir, float ig, float ib);
 
-//__host__ __device__ void getShadingColor();
+__host__ __device__ void getLight(PointLight *light, Vector3f *p, Vector3f *pos, Vector3f *lightDir, Color3f *c);
+__host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float y);
+__host__ __device__ void getShadingColor(Color3f *c, HitRecord *hit, Ray *ray, Scene *scene, int depth);
+__host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vector3f *refr);
+__host__ __device__ void Reflect(Vector3f *dir, Vector3f *normal, Vector3f *refl);
 __host__ __device__ void VectorAdd(Vector3f *v, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void setNormalOfTriangle(Triangle *triangle);
 __host__ __device__ void VectorSub(Vector3f *v, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void ScaleAdd(Vector3f *v0, float s, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void Normalize(Vector3f *v);
-__host__ __device__ void VectorScale(Vector3f *v, float s);
+__host__ __device__ void Scale(Vector3f *v, float s);
 __host__ __device__ void Negate(Vector3f *v);
 __host__ __device__ void CrossProduct(Vector3f *out, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void PointOnRay(float t, Ray *ray, Vector3f *pos);
 
-
-//Defined below main
+//Host only
 void DrawScreen(SDL_Surface *screen);
 void setpixel(SDL_Surface *screen, int x, int y, Uint8 r, Uint8 g, Uint8 b);
 void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_at, float in_fovy, float ratio);
 unsigned int floatToUint(float f);
 
+Camera camera;
 int mouse_old_x;//Old mouse position
 int mouse_old_y;
 int width = WIDTH;
 int height = HEIGHT;
-
-Camera camera;
 void* d_CUDA_Output;//Device pointer for output
 void* d_scene;//Device scene pointer
 void* h_CUDA_Output;//Host pointer for output
@@ -73,7 +68,7 @@ void* h_CUDA_Output;//Host pointer for output
 int main(int argc, char *argv[]){
 	dim3 threadsPerBlock(20,20);//Number of threads per block
 	dim3 numBlocks(WIDTH/threadsPerBlock.x, HEIGHT/threadsPerBlock.y);
-	
+
 	h_CUDA_Output = malloc(sizeof(Color3f) * WIDTH * HEIGHT);//Allocate memory on host for output
 	cudaMalloc(&d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT);//Allocate memory on device for output
 	cudaMalloc(&d_camera, sizeof(Camera));//Allocate memory for camera on host
@@ -176,15 +171,209 @@ __global__ void raytrace(Color3f *d_CUDA_Output, Scene *d_scene, int w, int h, i
 	d_CUDA_Output[(j * w) + i].b = 0;
 	
 	if(intersectScene(d_scene, &cameraRay, &hit, tmin, tmax) == 1){//Ray hit sphere
-		tmax = hit.t;//Update t
+		Color3f c;
+		getShadingColor(&c, hit, &cameraRay);
+		d_CUDA_Output[(j * w) + i] = c;
 	}
+}
+
+//Get the shading color at a hitting point
+//Recursively calls itself on reflective and refractive surfaces
+__host__ __device__ void getShadingColor(Color3f *c, HitRecord *hit, Ray *ray, Scene *scene, int depth){
+	InitColor(*c, 0, 0, 0);
+	Color3f lightColor;
+	Vector3f lightPos, lightDir, flippedRay, R;
+	Ray lightRay;
+	HitRecord tempHit;
+	float lightDist;
+	int i;
+	//Iterate through lights to find surface shading color
+	for(i = 0; i < scene->lightcount; i++){
+		getLight(&(scene->lights[i]), &(hit->pos), &lightPos, &lightDir, &lightColor);
+		
+		//Now check if shadowed
+		lightDist = sqrtf((lightDir.x * lightDir.x) + (lightDir.y * lightDir.y) + (lightDir.z * lightDir.z));
+		Normalize(&lightDir);
+		
+		lightRay.d = lightDir;
+		lightRay.o = hit->pos;
+		if(intersectScene(scene, &lightRay, &tempHit, 0.01, lightDist) == 0){//No objects blocking the ray, do light calculation
+			//Add diffuse portion
+			c->r += lightColor.r * hit->material.Kd.r * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
+			c->g += lightColor.g * hit->material.Kd.g * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
+			c->b += lightColor.b * hit->material.Kd.b * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
+			
+			//Add specular portion
+			//lightDir is the normalized vector from hit to light
+			//lightPos is the position of lightColor
+			//lightRay is the ray from hit to light
+			
+			Reflect(&(lightRay.d), &(hit->normal), &R);
+			
+			flippedRay = ray->d;
+			Negate(&flippedRay);
+			
+			c->r += lightColor.r * hit->material.Ks.r * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
+			c->g += lightColor.g * hit->material.Ks.g * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
+			c->b += lightColor.b * hit->material.Ks.b * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
+		}//end if(intersectScene() == 0)
+	}//End light shading loop
+
+	if(depth < MAX_DEPTH){
+		Color3f reflectedColor, refractedColor;
+		InitColor(&reflectedColor, 0, 0, 0);
+		InitColor(&refractedColor, 0, 0, 0);
+		Ray reflectedRay, refractedRay;
+		HitRecord refractHit, reflectHit;
+		
+		//intersectScene(Scene *scene, Ray *ray, HitRecord *hit, float tmin, float tmax)
+		
+		//Find reflective portion
+		if(hit->material.Kr.r > 0 || hit->material.Kr.g > 0 || hit->material.Kr.b > 0){//Surface is reflective
+			reflectedRay.o = hit->pos;
+			reflectedRay.d = ray->d;
+			Negate(&(reflectedRay.d));
+			Reflect(&(reflectedRay.d), &(hit->normal), &(reflectedRay.d));
+				if(intersectScene(scene, &reflectedRay, &reflectHit, 0.01, 1000) == 1){//reflected ray hits something
+					getShadingColor(&reflectedColor, &reflectHit, &reflectedRay, scene, depth + 1);//Recursively shade
+					c->r += reflectHit.material.Kr.r * reflectedColor.r;
+					c->g += reflectHit.material.Kr.g * reflectedColor.g;
+					c->b += reflectHit.material.Kr.b * reflectedColor.b;
+				}
+		}//End if reflective
+		
+		//Find refractive portion
+		if(hit->material.Kr.r > 0 || hit->material.Kr.r > 0 || hit->material.Kr.r > 0){//Material has refractive properties
+			refractedRay.o = hit->pos;
+			refractedRay.d = ray->d;
+			Refract(&(ray->d), &(hit->normal), &(hit->material.ior), &(refractedRay.d));
+			
+			if(intersectScene(scene, &refractedRay, &refractHit, 0.01, 1000) == 1){
+				getShadingColor(&refractedColor, &refractHit, &refractedRay, scene, depth + 1);//Recursive call
+				
+				//Hack - refracted shading color is made more or less strong depending on the length of the ray through the objects
+				//Seems to make stuff look really nice
+				Vector3f vThroughObj = refractHit.pos;
+				VectorSub(&vThroughObj, &vThroughObj, &(hit->pos));
+				float factor = 1/(sqrtf((vThroughObj.x * vThroughObj.x) + (vThroughObj.y * vThroughObj.y) + (vThroughObj.z * vThroughObj.z)));
+				if(factor > 1){
+					c->r += hit->material.Kt.r * refractedColor.r;
+					c->g += hit->material.Kt.g * refractedColor.g;
+					c->b += hit->material.Kt.b * refractedColor.b;
+				} else {
+					c->r += hit->material.Kt.r * refractedColor.r * factor;
+					c->g += hit->material.Kt.g * refractedColor.g * factor;
+					c->b += hit->material.Kt.b * refractedColor.b * factor;
+				}
+			}//End if(intersectScene())
+		}//End refractive section
+		
+		//Add in emissive portion of material
+		c->r += hit->material.Ie.r;
+		c->g += hit->material.Ie.g;
+		c->b += hit->material.Ie.b;
+		
+		//Add in ambient light portion
+		//Not currently implemented
+	}
+}
+
+//Find the light intensity of a light at a point, and find useful information for shadow calculation
+//Input: light, hit position
+//Output: pos, lightDir, c
+//Pos is the position of the light, lightDir is the direction from the light to p
+__host__ __device__ void getLight(PointLight *light, Vector3f *p, Vector3f *pos, Vector3f *lightDir, Color3f *c){
+	//light struct - pos, intensity
+	*pos = light->pos;
+	VectorSub(lightDir, pos, p);//lightDir = pos - p
+	//Find light intensity
+	//r = length of the vector from hit to light
+	float r = 1/((lightDir->x * lightDir->x) + (lightDir->y * lightDir->y) + (lightDir->z * lightDir->z));
+	*c = light->intensity;
+	c->r = r * c->r;
+	c->g = r * c->g;
+	c->b = r * c->b;
+	//Normalize(lightDir);
+}
+
+//Refract around a given normal and index of refraction
+//Dir is assumed to be pointing into hit point
+__host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vector3f *refr){
+	float mu;
+	if(VectorDot(normal, dir) < 0){
+		mu = 1/ior;
+	} else {
+		mu = ior;
+	}
+	
+	float cos_thetai = VectorDot(dir, normal);
+	float sin_thetai2 = 1 - (cos_thetai*cos_thetai);
+	
+	if(mu*mu*sin_thetai2 > 1){
+		return;//Do nothing
+	}
+	
+	float sin_thetar = mu*sqrtf(sin_thetai2);
+	float cos_thetar = sqrtf(1 - (sin_thetar * sin_thetar));
+	
+	Vector3f out = *normal;
+	
+	if(cos_thetai > 0){
+		Scale(&out, (-mu * cos_thetai) + cos_thetar);
+		ScaleAdd(&out, mu, dir, &out);
+	} else {
+		Scale(&out, (-mu * cos_thetai) + cos_thetar);
+		ScaleAdd(&out, mu, dir, &out);
+	}
+	
+	Normalize(&out);
+	*refr = out;
+}
+
+//Find a reflected ray given an incoming ray and a surface normal
+//Assumes dir is pointing away from the hit point
+__host__ __device__ void Reflect(Vector3f *dir, Vector3f *normal, Vector3f *refl){
+	*refl = *normal;
+	Scale(&(*refl), 2 * VectorDot(dir, normal));
+	VectorSub(out, dir);
 }
 
 //Given a ray and a scene, find the closest hiting point
 __host__ __device__ int intersectScene(Scene *scene, Ray *ray, HitRecord *hit, float tmin, float tmax){
+	int hitSomething = 0;//If ray intersects with no objects, return zero. Otherwise return 1.
+	int i,j;
 	
+	//Check spheres
+	for(i = 0; i < scene->spherecount; i++){
+		if(sphereIntersect(&(scene->spheres[i]), ray, hit, tmin, tmax)  == 1){//ray intersects with sphere
+			hitSomething = 1;
+			tmax = hit->t;//Reduce range, all hits after this must be closer to ray origin
+		}
+	}
+	
+	//Check triangle meshes
+	//TODO: Check bounding volumes first to avoid checking every triangle needlessly
+	for(i = 0; i < scene->meshcount; i++){
+		for(j = 0; j < scene->meshes[i].triangles; j++){//Go through every triangle in the mesh
+			if(triangleIntersect(&(scene->meshes[i].data[j]), ray, hit, tmin, tmax) == 1){//ray intersects triangle
+				hitSomething = 1;
+				tmax = hit->t;
+			}//end if
+		}//end for(j = 0; j < scene->meshes[j].triangles...)
+	}//End for(i = 0; i < scene->meshcount...)
+	
+	//Check planes
+	for(i = 0; i < scene->planecount; i++){//Check to see if ray intersects any planes
+		if(planeIntersect(&(scene->planes[i]), ray, hit, tmin, tmax) == 1){//ray intersects with plane
+			hitSomething = 1;
+			tmax = hit->t;
+		}//endif
+	}//end for (i = 0; i < scene->planecount...)
+	
+	return hitSomething;
 }
 
+//Find the intersection of a ray and a triangle
 __host__ __device__ int triangleIntersect(Triangle *triangle, Ray *ray, HitRecord *hit, float tmin, float tmax){
 	float a, b;//Barycentric alpha, beta
 	
@@ -284,22 +473,6 @@ __host__ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit
 	
 }
 
-//Used when setting up a trimesh. Given three points, finds the normal
-__host__ __device__ void setNormalOfTriangle(Triangle *triangle){
-	Vector3f v1;
-	Vector3f v2;
-	//v1 = p1 - p0
-	v1.x = triangle->p1.x - triangle->p0.x;
-	v1.x = triangle->p1.y - triangle->p0.y;
-	v1.x = triangle->p1.z - triangle->p0.z;
-	//v2 = p2 - p0
-	v2.x = triangle->p2.x - triangle->p0.x;
-	v2.x = triangle->p2.y - triangle->p0.y;
-	v2.x = triangle->p2.z - triangle->p0.z;
-	CrossProduct(&(triangle->normal), &v1, &v2);
-	Normalize(&(triangle->normal));
-}
-
 //Find the intersection of a ray and plane, if it exists
 __host__ __device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, float tmin, float tmax){
 	Vector3f temp;
@@ -321,6 +494,22 @@ __host__ __device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, f
 	return 1;
 }
 
+//Used when setting up a trimesh. Given three points, finds the normal
+__host__ __device__ void setNormalOfTriangle(Triangle *triangle){
+	Vector3f v1;
+	Vector3f v2;
+	//v1 = p1 - p0
+	v1.x = triangle->p1.x - triangle->p0.x;
+	v1.x = triangle->p1.y - triangle->p0.y;
+	v1.x = triangle->p1.z - triangle->p0.z;
+	//v2 = p2 - p0
+	v2.x = triangle->p2.x - triangle->p0.x;
+	v2.x = triangle->p2.y - triangle->p0.y;
+	v2.x = triangle->p2.z - triangle->p0.z;
+	CrossProduct(&(triangle->normal), &v1, &v2);
+	Normalize(&(triangle->normal));
+}
+
 //Given three columns representing a matrix, finds the determinant
 __host__ __device__ float findDeterminant(Vector3f *col0, Vector3f *col1, Vector3f *col2){
 	return 
@@ -330,8 +519,6 @@ __host__ __device__ float findDeterminant(Vector3f *col0, Vector3f *col1, Vector
 }
 
 //Set up camera rays for ray tracer
-//d_crays is the memory where the camera rays will go
-//d_camera is the location of the camera struct in device memory
 __host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float y){
 	Vector3f direction;
 	InitVector(&direction, 0, 0, 0);
@@ -355,35 +542,6 @@ __host__ __device__ float VectorDot(Vector3f *v, Vector3f *u){
 	return (v->x * u->x) + (v->y * u->y) + (v->z * u->z);
 }
 
-void DrawScreen(SDL_Surface *screen){
-	int y = 0;
-	int x = 0;
-	if(SDL_MUSTLOCK(screen)){
-		if(SDL_LockSurface(screen)){
-			return;
-		}
-	}
-	
-	Color3f *cudaout = (Color3f *)h_CUDA_Output;
-	
-	for(y = 0; y < HEIGHT;y++){
-		for(x = 0; x < WIDTH;x++){
-			setpixel(screen, x, y, floatToUint(cudaout[(x * WIDTH) + y].r), floatToUint(cudaout[(x * WIDTH) + y].g), floatToUint(cudaout[(x * WIDTH) + y].b));
-		}
-	}//End for(y..){
-		
-	if(SDL_MUSTLOCK(screen)){
-		SDL_UnlockSurface(screen);
-	}
-	SDL_Flip(screen);
-}
-
-//Converts float 0-1 to 0-255
-unsigned int floatToUint(float f){
-	unsigned int u = (int)(f*255);
-	return u;
-}
-
 //Compute the cross product of a vector
 //v1 x v2 = |{{i,j,k},{v1.x,v1.y,v1.z},{v2.x,v2.y,v2.z}}|
 __host__ __device__ void CrossProduct(Vector3f *out, Vector3f *v1, Vector3f *v2){
@@ -400,7 +558,7 @@ __host__ __device__ void Negate(Vector3f *v){
 }
 
 //Scales a vector v = s*v
-__host__ __device__ void VectorScale(Vector3f *v, float s){
+__host__ __device__ void Scale(Vector3f *v, float s){
 	v->x = s*(v->x);
 	v->y = s*(v->y);
 	v->z = s*(v->z);
@@ -442,7 +600,7 @@ __host__ __device__ void InitColor(Color3f *c, float ir, float ig, float ib){
 	c->b = ib;
 }
 
-//scaleadd v = s*v1 + v2
+//scaleadd v0 = s*v1 + v2
 __host__ __device__ void ScaleAdd(Vector3f *v0, float s, Vector3f *v1, Vector3f *v2){
 	Vector3f v;
 	v.x = s*(v1->x);
@@ -497,6 +655,36 @@ void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_
 	
 	camera->up = V;
 	VectorScale(&(camera->up), top-bottom);
+}
+
+//Converts float 0-1 to 0-255
+unsigned int floatToUint(float f){
+	unsigned int u = (int)(f*255);
+	return u;
+}
+
+//Draws the output of the CUDA kernel on the screen
+void DrawScreen(SDL_Surface *screen){
+	int y = 0;
+	int x = 0;
+	if(SDL_MUSTLOCK(screen)){
+		if(SDL_LockSurface(screen)){
+			return;
+		}
+	}
+	
+	Color3f *cudaout = (Color3f *)h_CUDA_Output;
+	
+	for(y = 0; y < HEIGHT;y++){
+		for(x = 0; x < WIDTH;x++){
+			setpixel(screen, x, y, floatToUint(cudaout[(x * WIDTH) + y].r), floatToUint(cudaout[(x * WIDTH) + y].g), floatToUint(cudaout[(x * WIDTH) + y].b));
+		}
+	}//End for(y..){
+		
+	if(SDL_MUSTLOCK(screen)){
+		SDL_UnlockSurface(screen);
+	}
+	SDL_Flip(screen);
 }
 
 void setpixel(SDL_Surface *screen, int x, int iny, Uint8 r, Uint8 g, Uint8 b){

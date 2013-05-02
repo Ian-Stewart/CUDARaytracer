@@ -42,18 +42,15 @@ typedef struct {
 	Material material;
 } Sphere;
 
-//Represents an array of triangles.
-typedef struct {
-	int length;
-	Triangle *data;
-} TriArray;
-
 //A triangle mesh
 //These are generated from .obj files
 typedef struct {
 	Material material;
-	TriArray bound;//Bounding volume for object
-	TriArray array;//Object triangles
+	Triangle *bound;//Bounding volume for object
+	//There should always be 12 triangles defining a boundary
+	
+	Triangle *data;//Object triangles
+	int triangles;
 } TriMesh;
 
 //A plane
