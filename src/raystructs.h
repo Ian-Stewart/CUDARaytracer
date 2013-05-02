@@ -44,7 +44,7 @@ typedef struct {
 
 //Represents an array of triangles.
 typedef struct {
-	size_t length;
+	int length;
 	Triangle *data;
 } TriArray;
 
@@ -52,7 +52,8 @@ typedef struct {
 //These are generated from .obj files
 typedef struct {
 	Material material;
-	TriArray array;
+	TriArray bound;//Bounding volume for object
+	TriArray array;//Object triangles
 } TriMesh;
 
 //A plane
@@ -81,6 +82,22 @@ typedef struct{
 	Vector3f d;
 } Ray;
 
+//Defines a 'scene' containing many objects
+typedef struct{
+	Sphere *spheres;
+	int spherecount;
+	
+	Plane *planes;
+	int planecount;
+	
+	TriMesh *meshes;
+	int meshcount;
+	
+	PointLight *lights;
+	int lightcount;
+	
+	Camera *camera;
+} Scene;
 
 //Defines  a camera. Only one in a running instance.
 typedef struct {
