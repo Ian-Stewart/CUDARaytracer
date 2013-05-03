@@ -62,7 +62,6 @@ int mouse_old_y;
 int width = WIDTH;
 int height = HEIGHT;
 void* d_CUDA_Output;//Device pointer for output
-void* d_scene;//Device scene pointer
 void* h_CUDA_Output;//Host pointer for output
 
 int main(int argc, char *argv[]){
@@ -71,8 +70,7 @@ int main(int argc, char *argv[]){
 
 	h_CUDA_Output = malloc(sizeof(Color3f) * WIDTH * HEIGHT);//Allocate memory on host for output
 	cudaMalloc(&d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT);//Allocate memory on device for output
-	cudaMalloc(&d_camera, sizeof(Camera));//Allocate memory for camera on host
-	
+	int i = 0;
 	//hard-coded camera, for now
 	Vector3f eye;
 	Vector3f at;
@@ -82,41 +80,89 @@ int main(int argc, char *argv[]){
 	InitVector(&up, 0,0,1);
 	initCamera(&camera, &eye, &up, &at, 45, 1);//Set up camera
 
-	cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
+	//cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
 	
 	SDL_Surface *screen;
 	SDL_Event event;
 	
-	int keypress = 0;
-	
+
 	int c = 0;//For basic animation
+	int keypress = 0;
+	int totalTris = 0;
+	int meshcount = 0;
+	int spherecount = 3;
+	int planecount = 1;
+	int lightcount = 1;
 	
-	//Scene. Will be replaced with .obj loading later
-	Scene scene;
-	scene.meshcount = 0;
-	scene.spherecount = 3;
-	scene.planecount = 1;
-	scene.lightcount = 1;
+	Sphere *spheres 	= (Sphere *)	malloc(sizeof(Sphere) * 3);//Scene will have three spheres
+	TriMesh *meshes 	= (TriMesh *)	malloc(sizeof(TriMesh) * 3);//Three trimeshes
+	Plane *planes 		= (Plane *)	malloc(sizeof(Plane) * 1);//One plane
+	PointLignt *lights 	= (PointLight *)malloc(sizeof(PointLight) * 1);//One light
 	
-	scene.spheres = (Sphere *)malloc(sizeof(Sphere) * 3);//Scene will have three spheres
-	scene.meshes = (TriMesh *)malloc(sizeof(TriMesh) * 3);//Three trimeshes
-	scene.planes = (Plane *)malloc(sizeof(Plane) * 1);//One plane
-	scene.lights = (PointLight *)malloc(sizeof(PointLight) * 1);//One light
+	InitVector(&(spheres[0].center), 0, 0, 0);
+	InitVector(&(spheres[1].center), 3, -1, 1);
+	InitVector(&(spheres[2].center), -1, 1, -1);
 	
-	InitVector(&(scene.spheres[0].center), 0, 0, 0);
-	InitVector(&(scene.spheres[1].center), 3, -1, 1);
-	InitVector(&(scene.spheres[2].center), -1, 1, -1);
+	spheres[0].radius = 1;
+	spheres[1].radius = 0.75;
+	spheres[2].radius = 1.5;
 	
-	scene.spheres[0].radius = 1;
-	scene.spheres[1].radius = 0.75;
-	scene.spheres[2].radius = 1.5;
+	InitVector(&(planes[0].p), 0, 0, -4);
+	InitVector(&(planes[0].normal), 0, 1, 1);
+	Normalize(&(planes[0].normal));
 	
-	InitVector(&(scene.planes[0].p), 0, 0, -4);
-	InitVector(&(scene.planes[0].normal), 0, 1, 1);
-	Normalize(&(scene.planes[0].normal));
+	InitVector(&(lights[0].pos), 0, 4, 8);
+	InitColor(&(lights[0].intensity), 100,100,100);
 	
-	InitVector(&(scene.lights[0].pos), 0, 4, 8);
-	InitColor(&(scene.lights[0].intensity), 100,100,100);
+	//CUDA memory
+	void* d_camera;
+	void* d_trimeshes;
+	void* d_spheres;
+	void* d_planes;
+	void* d_triangles;
+	void* d_lights
+	
+	TriMesh *h_flattened_triangles;
+	
+	cudaMalloc(&d_camera, sizeof(Camera));//Allocate memory for camera on host
+	cudaMalloc(&d_trimeshes, sizeof(TriMesh) * meshcount);//Allocate memory for TriMesh structures
+	cudaMalloc(&d_spheres, sizeof(Sphere) * spherecount);//Allocate mem for spheres
+	cudaMalloc(&d_planes, sizeof(Plane) * planecount);
+	cudaMalloc(&d_lights, sizeof(PointLight) * lightcount);//For lights
+	
+	for(i = 0; i < meshcount; i++){
+		totalTris += meshes[i].triangles;//Count up the total number of triangles
+	}
+	totalTris += meshcount * 12;//For bounding triangles
+	
+	cudaMalloc(&d_triangles, sizeof(Triangle) * totalTris);//Allocate space for flattened triangle data
+	h_flattened_triangles = (Triangle *)malloc(sizeof(Triangle) * totalTris);
+	//Now dump triangle data to flat array.
+	//Will be accessed by pointer shenanegans
+	//Running 'offset' based on number of triangles in previous trimeshes
+	//In this model, bounding volumes are the first 12 triangles of each trimesh segment
+	int offset = 0;
+	Triangle* currentptr;//Used in copying 
+	currentptr = h_flattened_triangles;
+	for(int i = 0; i < meshes; i++){
+		memcpy(h_flattened_triangles, 
+		currentptr += 12;//Increment pointer after copying bounding triangles
+	}
+	
+	//Finally, copy flattened data
+	cudaMemcpy(d_triangles, h_flattened_triangles, sizeof(Triangle) * totalTris, cudaMemcpyHostToDevice);
+
+	//Begin copying from host to device
+	//Copy camera
+	cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
+	//Copy planes
+	cudaMemcpy(d_planes, planes, sizeof(Plane) * planecount, cudaMemcpyHostToDevice);
+	//Copy spheres
+	cudaMemcpy(d_spheres, spheres, sizeof(Sphere) * spherecount, cudaMemcpyHostToDevice);
+	//Copy trimesh structs - cannot deep copy data
+	cudaMemcpy(d_trimeshes, meshes, sizeof(Trimesh * meshcount, cudaMemcpyHostToDevice);
+	
+	//End memory copying from host to device
 	
 	if(SDL_Init(SDL_INIT_VIDEO) < 0){
 		return 1;

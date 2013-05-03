@@ -46,10 +46,6 @@ typedef struct {
 //These are generated from .obj files
 typedef struct {
 	Material material;
-	Triangle *bound;//Bounding volume for object
-	//There should always be 12 triangles defining a boundary
-	
-	Triangle *data;//Object triangles
 	int triangles;
 } TriMesh;
 
@@ -78,23 +74,6 @@ typedef struct{
 	Vector3f o;
 	Vector3f d;
 } Ray;
-
-//Defines a 'scene' containing many objects
-typedef struct{
-	Sphere *spheres;
-	int spherecount;
-	
-	Plane *planes;
-	int planecount;
-	
-	TriMesh *meshes;
-	int meshcount;
-	
-	PointLight *lights;
-	int lightcount;
-	
-	Camera *camera;
-} Scene;
 
 //Defines  a camera. Only one in a running instance.
 typedef struct {
