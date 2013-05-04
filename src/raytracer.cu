@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 #include <math.h>
 #include <X11/X.h>
 #include <X11/Xlib.h>
@@ -77,7 +78,7 @@ int main(int argc, char *argv[]){
 	Vector3f up;
 	InitVector(&eye, -1, 0, 0);
 	InitVector(&at, 0, 0, 0);
-	InitVector(&up, 0,0,1);
+	InitVector(&up, 0,0, 1);
 	initCamera(&camera, &eye, &up, &at, 45, 1);//Set up camera
 
 	//cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
@@ -91,28 +92,46 @@ int main(int argc, char *argv[]){
 	//int totalTris = 0;
 	//int meshcount = 0;
 	int spherecount = 3;
-	int planecount = 1;
+	int planecount = 0;
 	int lightcount = 1;
 	
-	Sphere *spheres 	= (Sphere *)	malloc(sizeof(Sphere) * 3);//Scene will have three spheres
+	Sphere *spheres 	= (Sphere *)	malloc(sizeof(Sphere) * spherecount);//Scene will have three spheres
 	//TriMesh *meshes 	= (TriMesh *)	malloc(sizeof(TriMesh) * 3);//Three trimeshes
-	Plane *planes 		= (Plane *)	malloc(sizeof(Plane) * 1);//One plane
-	PointLight *lights 	= (PointLight *)malloc(sizeof(PointLight) * 1);//One light
+	Plane *planes 		= (Plane *)	malloc(sizeof(Plane) * planecount);//One plane
+	PointLight *lights 	= (PointLight *)malloc(sizeof(PointLight) * lightcount);//One light
 	
-	InitVector(&(spheres[0].center), 0, 0, 0);
-	InitVector(&(spheres[1].center), 3, -1, 1);
-	InitVector(&(spheres[2].center), -1, 1, -1);
+	InitVector(&(spheres[0].center), 2, 0, 0);
+	InitVector(&(spheres[1].center), 3, 0, 0);
+	InitVector(&(spheres[2].center), 4, 0, 0);
 	
 	spheres[0].radius = 1;
 	spheres[1].radius = 0.75;
 	spheres[2].radius = 1.5;
 	
-	InitVector(&(planes[0].p), 0, 0, -4);
-	InitVector(&(planes[0].normal), 0, 1, 1);
+	InitVector(&(planes[0].p), 10, 0, -5);
+	InitVector(&(planes[0].normal), 0, 1, -1);
 	Normalize(&(planes[0].normal));
 	
 	InitVector(&(lights[0].pos), 0, 4, 8);
 	InitColor(&(lights[0].intensity), 100,100,100);
+	
+	//Test material
+	Material m;
+	InitColor(&(m.Ka), 1, 1, 1);
+	InitColor(&(m.Kd), 1, 1, 1);
+	InitColor(&(m.Ks), 1, 1, 1);
+	InitColor(&(m.Kr), 0, 0, 0);
+	InitColor(&(m.Kt), 0, 0, 0);
+	InitColor(&(m.Ie), 0, 0, 0);
+	m.phong_exp = 10;
+	m.ior = 0;
+	
+	spheres[0].material = m;
+	spheres[1].material = m;
+	spheres[2].material = m;
+	
+	planes[0].material = m;
+	//End material
 	
 	//CUDA memory
 	void* d_camera;
@@ -176,7 +195,11 @@ int main(int argc, char *argv[]){
 		SDL_Quit();
 		return 1;
 	}
+	timeval start, end;//For measuring frame length
+	
+	
 	while(!keypress){
+		gettimeofday(&start, NULL);
 		//Launch Kernel
 		raytrace<<<numBlocks, threadsPerBlock>>>(
 			(Color3f *)d_CUDA_Output,
@@ -191,7 +214,7 @@ int main(int argc, char *argv[]){
 			HEIGHT,
 			c++
 		);
-		//printf("%s\n", cudaGetErrorString(cudaGetLastError()));
+		printf("%s\n", cudaGetErrorString(cudaGetLastError()));
 		cudaDeviceSynchronize();//Wait for GPU to finish
 		cudaMemcpy(h_CUDA_Output, d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT, cudaMemcpyDeviceToHost);//Copy results of GPU kernel to host memory
 
@@ -206,6 +229,8 @@ int main(int argc, char *argv[]){
 					break;
 			}//End switch(event.type)
 		}//End while(SDL_PollEvent)
+		gettimeofday(&end, NULL);
+		printf("Frame took %lu msec\n", (end.tv_usec - start.tv_usec)/1000);
 	}//End while(!keypress)
 	SDL_Quit();
 	return 0;
@@ -247,6 +272,7 @@ __global__ void raytrace(
 	
 	if(intersectScene(d_spheres, d_planes, d_lights, &cameraRay, &hit, spherecount, planecount, lightcount, tmin, tmax) == 1){//Ray hit something in the scene
 		Color3f c;
+		InitColor(&c, 0, 0, 0);
 		getShadingColor(&c, d_spheres, d_planes, d_lights, &cameraRay, &hit, spherecount, planecount, lightcount, 0);
 		d_CUDA_Output[(j * w) + i] = c;
 	}
@@ -339,8 +365,13 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 			c->g += lightColor.g * hit->material.Ks.g * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
 			c->b += lightColor.b * hit->material.Ks.b * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
 		}//end if(intersectScene() == 0)
+		else {//test shadow stuff TODO remove
+			c->r = 0.1;
+			c->g = 0;
+			c->b = 0;
+		}
 	}//End light shading loop
-
+	/*
 	if(depth < MAX_DEPTH){
 		Color3f reflectedColor, refractedColor;
 		InitColor(&reflectedColor, 0, 0, 0);
@@ -412,14 +443,15 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 			}//End if(intersectScene())
 		}//End refractive section
 		
-		//Add in emissive portion of material
-		c->r += hit->material.Ie.r;
-		c->g += hit->material.Ie.g;
-		c->b += hit->material.Ie.b;
+
 		
+	}*/
+	//Add in emissive portion of material
+	c->r += hit->material.Ie.r;
+	c->g += hit->material.Ie.g;
+	c->b += hit->material.Ie.b;
 		//Add in ambient light portion
 		//Not currently implemented
-	}
 }
 
 //Find the light intensity of a light at a point, and find useful information for shadow calculation
