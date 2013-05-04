@@ -76,10 +76,10 @@ int main(int argc, char *argv[]){
 	Vector3f eye;
 	Vector3f at;
 	Vector3f up;
-	InitVector(&eye, -1, 0, 0);
+	InitVector(&eye, 0, -10, 0);
 	InitVector(&at, 0, 0, 0);
-	InitVector(&up, 0,0, 1);
-	initCamera(&camera, &eye, &up, &at, 45, 1);//Set up camera
+	InitVector(&up, 1, 0, 0);
+	initCamera(&camera, &eye, &up, &at, 40, 1);//Set up camera
 
 	//cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
 	
@@ -92,34 +92,36 @@ int main(int argc, char *argv[]){
 	//int totalTris = 0;
 	//int meshcount = 0;
 	int spherecount = 3;
-	int planecount = 0;
-	int lightcount = 1;
+	int planecount = 1;
+	int lightcount = 2;
 	
 	Sphere *spheres 	= (Sphere *)	malloc(sizeof(Sphere) * spherecount);//Scene will have three spheres
 	//TriMesh *meshes 	= (TriMesh *)	malloc(sizeof(TriMesh) * 3);//Three trimeshes
 	Plane *planes 		= (Plane *)	malloc(sizeof(Plane) * planecount);//One plane
 	PointLight *lights 	= (PointLight *)malloc(sizeof(PointLight) * lightcount);//One light
 	
-	InitVector(&(spheres[0].center), 2, 0, 0);
-	InitVector(&(spheres[1].center), 3, 0, 0);
-	InitVector(&(spheres[2].center), 4, 0, 0);
+	InitVector(&(spheres[0].center), -2, 0, 0);
+	InitVector(&(spheres[1].center), 0, 0, 0);
+	InitVector(&(spheres[2].center), 2, 0, 0);
 	
-	spheres[0].radius = 1;
+	spheres[0].radius = 0.75;
 	spheres[1].radius = 0.75;
-	spheres[2].radius = 1.5;
+	spheres[2].radius = 0.75;
 	
-	InitVector(&(planes[0].p), 10, 0, -5);
-	InitVector(&(planes[0].normal), 0, 1, -1);
+	InitVector(&(planes[0].p), 0, 0, -2);
+	InitVector(&(planes[0].normal), 0, 0, 1);
 	Normalize(&(planes[0].normal));
 	
-	InitVector(&(lights[0].pos), 0, 4, 8);
-	InitColor(&(lights[0].intensity), 100,100,100);
+	InitVector(&(lights[0].pos), 0, -10, 0);
+	InitColor(&(lights[0].intensity), 25,25,25);
+	InitVector(&(lights[1].pos), 0, 2, 4);
+	InitColor(&(lights[1].intensity), 10,10,15);
 	
 	//Test material
 	Material m;
 	InitColor(&(m.Ka), 1, 1, 1);
 	InitColor(&(m.Kd), 1, 1, 1);
-	InitColor(&(m.Ks), 1, 1, 1);
+	InitColor(&(m.Ks), 0.25, 0.25, 0.25);
 	InitColor(&(m.Kr), 0, 0, 0);
 	InitColor(&(m.Kt), 0, 0, 0);
 	InitColor(&(m.Ie), 0, 0, 0);
@@ -199,6 +201,7 @@ int main(int argc, char *argv[]){
 	
 	
 	while(!keypress){
+		printf("%i\n", c);
 		gettimeofday(&start, NULL);
 		//Launch Kernel
 		raytrace<<<numBlocks, threadsPerBlock>>>(
@@ -274,6 +277,10 @@ __global__ void raytrace(
 		Color3f c;
 		InitColor(&c, 0, 0, 0);
 		getShadingColor(&c, d_spheres, d_planes, d_lights, &cameraRay, &hit, spherecount, planecount, lightcount, 0);
+		//Clamp to 1 - causes weird issues if this isn't done
+		if(c.r > 1) c.r = 1;
+		if(c.g > 1) c.g = 1;
+		if(c.b > 1) c.b = 1;
 		d_CUDA_Output[(j * w) + i] = c;
 	}
 }
@@ -293,7 +300,6 @@ __host__ __device__ int intersectScene(
 				){
 	int hitSomething = 0;//If ray intersects with no objects, return zero. Otherwise return 1.
 	int i;//,j;
-	
 	//Check spheres
 	for(i = 0; i < spherecount; i++){
 		if(sphereIntersect(&(d_spheres[i]), ray, hit, tmin, tmax)  == 1){//ray intersects with sphere //TODO change &(spheres[i]) to spheres + i?
@@ -365,11 +371,6 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 			c->g += lightColor.g * hit->material.Ks.g * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
 			c->b += lightColor.b * hit->material.Ks.b * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
 		}//end if(intersectScene() == 0)
-		else {//test shadow stuff TODO remove
-			c->r = 0.1;
-			c->g = 0;
-			c->b = 0;
-		}
 	}//End light shading loop
 	/*
 	if(depth < MAX_DEPTH){
@@ -574,7 +575,7 @@ __host__ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit
 		ray->o.y - sphere->center.y,
 		ray->o.z - sphere->center.z
 	);
-	
+	float t;
 	float B = 2*VectorDot(&v, &(ray->d));
 	float C = VectorDot(&v, &v) - (sphere->radius * sphere->radius);
 	float discriminant = sqrtf(B*B - 4*C);
@@ -591,15 +592,17 @@ __host__ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit
 		}
 		//Now find smaller t
 		if(t1 <= t2){
-			hit->t = t1;
+			t = t1;
 		}
 		if(t2 < t1){
-			hit->t = t2;
+			t = t2;
 		}
 		
-		if(hit->t > tmax || hit->t < tmin){//Hit is out of bounds
+		if(t > tmax || t < tmin){//Hit is out of bounds
 			return 0;
 		}
+		
+		hit->t = t;
 		
 		PointOnRay(hit->t, ray, &(hit->pos));//Find the hitting point and set hit->pos to it
 		hit->material = sphere->material;//Set hit material
