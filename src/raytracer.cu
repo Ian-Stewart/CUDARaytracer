@@ -22,12 +22,12 @@
 
 //__host__ __device__ indicates a function that is run on both the GPU and CPU
 //__global__ indicates a CUDA kernel
-__global__ void raytrace(Color3f *d_CUDA_Output, Scene *d_scene, int w, int h, int c);//This actually does the raytracing
+__global__ void raytrace(Color3f *d_CUDA_Output, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Camera *d_camera, int spherecount, int planecount, int lightcount, int w, int h, int c);//This actually does the raytracing
 
 __host__ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit, float tmin, float tmax);
 __host__ __device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, float tmin, float tmax);
-__host__ __device__ int intersectScene(Scene *scene, Ray *ray, HitRecord *hit, float tmin, float tmax);
-__host__ __device__ int triangleIntersect(Triangle *triangle, Ray *ray, HitRecord *hit, float tmin, float tmax);
+__host__ __device__ int intersectScene(Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Ray *ray, HitRecord *hit, int spherecount, int planecount, int lightcount, float tmin, float tmax);
+__host__ __device__ int triangleIntersect(Triangle *triangle, TriMesh *trimesh, Ray *ray, HitRecord *hit, float tmin, float tmax);
 
 __host__ __device__ float VectorDot(Vector3f *v, Vector3f *u);
 __host__ __device__ float findDeterminant(Vector3f *col0, Vector3f *col1, Vector3f *col2);
@@ -35,9 +35,9 @@ __host__ __device__ float findDeterminant(Vector3f *col0, Vector3f *col1, Vector
 __host__ __device__ inline void InitVector(Vector3f *v, float ix, float iy, float iz);
 __host__ __device__ inline void InitColor(Color3f *c, float ir, float ig, float ib);
 
+__host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Ray *ray, HitRecord *hit, int spherecount, int planecount, int lightcount, int depth);
 __host__ __device__ void getLight(PointLight *light, Vector3f *p, Vector3f *pos, Vector3f *lightDir, Color3f *c);
 __host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float y);
-__host__ __device__ void getShadingColor(Color3f *c, HitRecord *hit, Ray *ray, Scene *scene, int depth);
 __host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vector3f *refr);
 __host__ __device__ void Reflect(Vector3f *dir, Vector3f *normal, Vector3f *refl);
 __host__ __device__ void VectorAdd(Vector3f *v, Vector3f *v1, Vector3f *v2);
@@ -70,7 +70,7 @@ int main(int argc, char *argv[]){
 
 	h_CUDA_Output = malloc(sizeof(Color3f) * WIDTH * HEIGHT);//Allocate memory on host for output
 	cudaMalloc(&d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT);//Allocate memory on device for output
-	int i = 0;
+	//int i = 0;
 	//hard-coded camera, for now
 	Vector3f eye;
 	Vector3f at;
@@ -88,16 +88,16 @@ int main(int argc, char *argv[]){
 
 	int c = 0;//For basic animation
 	int keypress = 0;
-	int totalTris = 0;
-	int meshcount = 0;
+	//int totalTris = 0;
+	//int meshcount = 0;
 	int spherecount = 3;
 	int planecount = 1;
 	int lightcount = 1;
 	
 	Sphere *spheres 	= (Sphere *)	malloc(sizeof(Sphere) * 3);//Scene will have three spheres
-	TriMesh *meshes 	= (TriMesh *)	malloc(sizeof(TriMesh) * 3);//Three trimeshes
+	//TriMesh *meshes 	= (TriMesh *)	malloc(sizeof(TriMesh) * 3);//Three trimeshes
 	Plane *planes 		= (Plane *)	malloc(sizeof(Plane) * 1);//One plane
-	PointLignt *lights 	= (PointLight *)malloc(sizeof(PointLight) * 1);//One light
+	PointLight *lights 	= (PointLight *)malloc(sizeof(PointLight) * 1);//One light
 	
 	InitVector(&(spheres[0].center), 0, 0, 0);
 	InitVector(&(spheres[1].center), 3, -1, 1);
@@ -116,41 +116,43 @@ int main(int argc, char *argv[]){
 	
 	//CUDA memory
 	void* d_camera;
-	void* d_trimeshes;
+	//void* d_trimeshes;
 	void* d_spheres;
 	void* d_planes;
-	void* d_triangles;
-	void* d_lights
+	//void* d_triangles;
+	void* d_lights;
 	
-	TriMesh *h_flattened_triangles;
+	//TriMesh *h_flattened_triangles;
 	
 	cudaMalloc(&d_camera, sizeof(Camera));//Allocate memory for camera on host
-	cudaMalloc(&d_trimeshes, sizeof(TriMesh) * meshcount);//Allocate memory for TriMesh structures
+	//cudaMalloc(&d_trimeshes, sizeof(TriMesh) * meshcount);//Allocate memory for TriMesh structures
 	cudaMalloc(&d_spheres, sizeof(Sphere) * spherecount);//Allocate mem for spheres
 	cudaMalloc(&d_planes, sizeof(Plane) * planecount);
 	cudaMalloc(&d_lights, sizeof(PointLight) * lightcount);//For lights
 	
+	/*
 	for(i = 0; i < meshcount; i++){
 		totalTris += meshes[i].triangles;//Count up the total number of triangles
 	}
 	totalTris += meshcount * 12;//For bounding triangles
+	*/
 	
-	cudaMalloc(&d_triangles, sizeof(Triangle) * totalTris);//Allocate space for flattened triangle data
-	h_flattened_triangles = (Triangle *)malloc(sizeof(Triangle) * totalTris);
+	//cudaMalloc(&d_triangles, sizeof(Triangle) * totalTris);//Allocate space for flattened triangle data
+	//h_flattened_triangles = (Triangle *)malloc(sizeof(Triangle) * totalTris);
 	//Now dump triangle data to flat array.
 	//Will be accessed by pointer shenanegans
 	//Running 'offset' based on number of triangles in previous trimeshes
 	//In this model, bounding volumes are the first 12 triangles of each trimesh segment
-	int offset = 0;
-	Triangle* currentptr;//Used in copying 
-	currentptr = h_flattened_triangles;
-	for(int i = 0; i < meshes; i++){
-		memcpy(h_flattened_triangles, 
-		currentptr += 12;//Increment pointer after copying bounding triangles
-	}
+	//int offset = 0;
+	//Triangle* currentptr;//Used in copying 
+	//currentptr = h_flattened_triangles;
+	//for(int i = 0; i < meshes; i++){
+	//	memcpy(h_flattened_triangles, 
+	//	currentptr += 12;//Increment pointer after copying bounding triangles
+	//}
 	
 	//Finally, copy flattened data
-	cudaMemcpy(d_triangles, h_flattened_triangles, sizeof(Triangle) * totalTris, cudaMemcpyHostToDevice);
+	//cudaMemcpy(d_triangles, h_flattened_triangles, sizeof(Triangle) * totalTris, cudaMemcpyHostToDevice);
 
 	//Begin copying from host to device
 	//Copy camera
@@ -160,7 +162,9 @@ int main(int argc, char *argv[]){
 	//Copy spheres
 	cudaMemcpy(d_spheres, spheres, sizeof(Sphere) * spherecount, cudaMemcpyHostToDevice);
 	//Copy trimesh structs - cannot deep copy data
-	cudaMemcpy(d_trimeshes, meshes, sizeof(Trimesh * meshcount, cudaMemcpyHostToDevice);
+	//cudaMemcpy(d_trimeshes, meshes, sizeof(Trimesh * meshcount, cudaMemcpyHostToDevice);
+	//Copy lights
+	cudaMemcpy(d_lights, lights, sizeof(PointLight) * lightcount, cudaMemcpyHostToDevice);
 	
 	//End memory copying from host to device
 	
@@ -174,7 +178,19 @@ int main(int argc, char *argv[]){
 	}
 	while(!keypress){
 		//Launch Kernel
-		raytrace<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, (Camera *)d_camera, WIDTH, HEIGHT, c++);
+		raytrace<<<numBlocks, threadsPerBlock>>>(
+			(Color3f *)d_CUDA_Output,
+			(Sphere *) d_spheres,
+			(Plane *) d_planes,
+			(PointLight *) d_lights,
+			(Camera *)d_camera,
+			spherecount,
+			planecount,
+			lightcount,
+			WIDTH,
+			HEIGHT,
+			c++
+		);
 		//printf("%s\n", cudaGetErrorString(cudaGetLastError()));
 		cudaDeviceSynchronize();//Wait for GPU to finish
 		cudaMemcpy(h_CUDA_Output, d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT, cudaMemcpyDeviceToHost);//Copy results of GPU kernel to host memory
@@ -196,7 +212,20 @@ int main(int argc, char *argv[]){
 }
 
 //Kernel that actually raytraces
-__global__ void raytrace(Color3f *d_CUDA_Output, Scene *d_scene, int w, int h, int c){
+//Size of each array of objects is given by 'x'count integers
+__global__ void raytrace(
+				Color3f *d_CUDA_Output,
+				Sphere *d_spheres,
+				Plane *d_planes,
+				PointLight *d_lights,
+				Camera *d_camera,
+				int spherecount,
+				int planecount,
+				int lightcount,
+				int w,
+				int h,
+				int c
+			){
 	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
 	Ray cameraRay;
@@ -206,7 +235,7 @@ __global__ void raytrace(Color3f *d_CUDA_Output, Scene *d_scene, int w, int h, i
 	
 	x = (float) i/ (float) w;
 	y = (float) j/ (float) h;
-	getCameraRay(&cameraRay, &(d_scene->camera), x, y);//Get the camera ray
+	getCameraRay(&cameraRay, d_camera, x, y);//Get the camera ray
 	
 	float tmin = 0.001;
 	float tmax = 1000;
@@ -216,17 +245,64 @@ __global__ void raytrace(Color3f *d_CUDA_Output, Scene *d_scene, int w, int h, i
 	d_CUDA_Output[(j * w) + i].g = 0;
 	d_CUDA_Output[(j * w) + i].b = 0;
 	
-	if(intersectScene(d_scene, &cameraRay, &hit, tmin, tmax) == 1){//Ray hit sphere
+	if(intersectScene(d_spheres, d_planes, d_lights, &cameraRay, &hit, spherecount, planecount, lightcount, tmin, tmax) == 1){//Ray hit something in the scene
 		Color3f c;
-		getShadingColor(&c, hit, &cameraRay);
+		getShadingColor(&c, d_spheres, d_planes, d_lights, &cameraRay, &hit, spherecount, planecount, lightcount, 0);
 		d_CUDA_Output[(j * w) + i] = c;
 	}
 }
 
+//Given a ray and a scene, find the closest hiting point
+__host__ __device__ int intersectScene(
+					Sphere *d_spheres,
+					Plane *d_planes,
+					PointLight *d_lights,
+					Ray *ray,
+					HitRecord *hit,
+					int spherecount,
+					int planecount,
+					int lightcount,
+					float tmin,
+					float tmax
+				){
+	int hitSomething = 0;//If ray intersects with no objects, return zero. Otherwise return 1.
+	int i;//,j;
+	
+	//Check spheres
+	for(i = 0; i < spherecount; i++){
+		if(sphereIntersect(&(d_spheres[i]), ray, hit, tmin, tmax)  == 1){//ray intersects with sphere //TODO change &(spheres[i]) to spheres + i?
+			hitSomething = 1;
+			tmax = hit->t;//Reduce range, all hits after this must be closer to ray origin
+		}
+	}
+	
+	//Check triangle meshes
+	//TODO: Check bounding volumes first to avoid checking every triangle needlessly
+	/*
+	for(i = 0; i < meshcount; i++){
+		for(j = 0; j < meshes[i].triangles; j++){//Go through every triangle in the mesh
+			if(triangleIntersect(&(meshes[i].data[j]), ray, hit, tmin, tmax) == 1){//ray intersects triangle
+				hitSomething = 1;
+				tmax = hit->t;
+			}//end if
+		}//end for(j = 0; j < scene->meshes[j].triangles...)
+	}//End for(i = 0; i < scene->meshcount...)
+	*/
+	//Check planes
+	for(i = 0; i < planecount; i++){//Check to see if ray intersects any planes
+		if(planeIntersect(&(d_planes[i]), ray, hit, tmin, tmax) == 1){//ray intersects with plane
+			hitSomething = 1;
+			tmax = hit->t;
+		}//endif
+	}//end for (i = 0; i < scene->planecount...)
+	
+	return hitSomething;
+}
+
 //Get the shading color at a hitting point
 //Recursively calls itself on reflective and refractive surfaces
-__host__ __device__ void getShadingColor(Color3f *c, HitRecord *hit, Ray *ray, Scene *scene, int depth){
-	InitColor(*c, 0, 0, 0);
+__host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Ray *ray, HitRecord *hit, int spherecount, int planecount, int lightcount, int depth){
+	InitColor(c, 0, 0, 0);
 	Color3f lightColor;
 	Vector3f lightPos, lightDir, flippedRay, R;
 	Ray lightRay;
@@ -234,8 +310,8 @@ __host__ __device__ void getShadingColor(Color3f *c, HitRecord *hit, Ray *ray, S
 	float lightDist;
 	int i;
 	//Iterate through lights to find surface shading color
-	for(i = 0; i < scene->lightcount; i++){
-		getLight(&(scene->lights[i]), &(hit->pos), &lightPos, &lightDir, &lightColor);
+	for(i = 0; i < lightcount; i++){
+		getLight(&(d_lights[i]), &(hit->pos), &lightPos, &lightDir, &lightColor);
 		
 		//Now check if shadowed
 		lightDist = sqrtf((lightDir.x * lightDir.x) + (lightDir.y * lightDir.y) + (lightDir.z * lightDir.z));
@@ -243,7 +319,7 @@ __host__ __device__ void getShadingColor(Color3f *c, HitRecord *hit, Ray *ray, S
 		
 		lightRay.d = lightDir;
 		lightRay.o = hit->pos;
-		if(intersectScene(scene, &lightRay, &tempHit, 0.01, lightDist) == 0){//No objects blocking the ray, do light calculation
+		if(intersectScene(d_spheres, d_planes, d_lights, &lightRay, &tempHit, spherecount, planecount, lightcount, 0.01, lightDist) == 0){//No objects blocking the ray, do light calculation
 			//Add diffuse portion
 			c->r += lightColor.r * hit->material.Kd.r * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
 			c->g += lightColor.g * hit->material.Kd.g * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
@@ -280,8 +356,19 @@ __host__ __device__ void getShadingColor(Color3f *c, HitRecord *hit, Ray *ray, S
 			reflectedRay.d = ray->d;
 			Negate(&(reflectedRay.d));
 			Reflect(&(reflectedRay.d), &(hit->normal), &(reflectedRay.d));
-				if(intersectScene(scene, &reflectedRay, &reflectHit, 0.01, 1000) == 1){//reflected ray hits something
-					getShadingColor(&reflectedColor, &reflectHit, &reflectedRay, scene, depth + 1);//Recursively shade
+				if(intersectScene(d_spheres, d_planes, d_lights, &reflectedRay, &reflectHit, spherecount, planecount,lightcount, 0.01, 1000) == 1){//reflected ray hits something
+				getShadingColor(
+					&reflectedColor, 
+					d_spheres,
+					d_planes,
+					d_lights,
+					&reflectedRay,
+					&reflectHit,
+					spherecount,
+					planecount,
+					lightcount,
+					depth + 1
+				);//Recursive call to get reflected color
 					c->r += reflectHit.material.Kr.r * reflectedColor.r;
 					c->g += reflectHit.material.Kr.g * reflectedColor.g;
 					c->b += reflectHit.material.Kr.b * reflectedColor.b;
@@ -292,10 +379,21 @@ __host__ __device__ void getShadingColor(Color3f *c, HitRecord *hit, Ray *ray, S
 		if(hit->material.Kr.r > 0 || hit->material.Kr.r > 0 || hit->material.Kr.r > 0){//Material has refractive properties
 			refractedRay.o = hit->pos;
 			refractedRay.d = ray->d;
-			Refract(&(ray->d), &(hit->normal), &(hit->material.ior), &(refractedRay.d));
+			Refract(&(ray->d), &(hit->normal), hit->material.ior, &(refractedRay.d));
 			
-			if(intersectScene(scene, &refractedRay, &refractHit, 0.01, 1000) == 1){
-				getShadingColor(&refractedColor, &refractHit, &refractedRay, scene, depth + 1);//Recursive call
+			if(intersectScene(d_spheres, d_planes, d_lights, &refractedRay, &refractHit, spherecount, planecount,lightcount, 0.01, 1000) == 1){
+				getShadingColor(
+					&refractedColor, 
+					d_spheres,
+					d_planes,
+					d_lights,
+					&refractedRay,
+					&refractHit,
+					spherecount,
+					planecount,
+					lightcount,
+					depth + 1
+				);//Recursive call
 				
 				//Hack - refracted shading color is made more or less strong depending on the length of the ray through the objects
 				//Seems to make stuff look really nice
@@ -381,46 +479,11 @@ __host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vec
 __host__ __device__ void Reflect(Vector3f *dir, Vector3f *normal, Vector3f *refl){
 	*refl = *normal;
 	Scale(&(*refl), 2 * VectorDot(dir, normal));
-	VectorSub(out, dir);
-}
-
-//Given a ray and a scene, find the closest hiting point
-__host__ __device__ int intersectScene(Scene *scene, Ray *ray, HitRecord *hit, float tmin, float tmax){
-	int hitSomething = 0;//If ray intersects with no objects, return zero. Otherwise return 1.
-	int i,j;
-	
-	//Check spheres
-	for(i = 0; i < scene->spherecount; i++){
-		if(sphereIntersect(&(scene->spheres[i]), ray, hit, tmin, tmax)  == 1){//ray intersects with sphere
-			hitSomething = 1;
-			tmax = hit->t;//Reduce range, all hits after this must be closer to ray origin
-		}
-	}
-	
-	//Check triangle meshes
-	//TODO: Check bounding volumes first to avoid checking every triangle needlessly
-	for(i = 0; i < scene->meshcount; i++){
-		for(j = 0; j < scene->meshes[i].triangles; j++){//Go through every triangle in the mesh
-			if(triangleIntersect(&(scene->meshes[i].data[j]), ray, hit, tmin, tmax) == 1){//ray intersects triangle
-				hitSomething = 1;
-				tmax = hit->t;
-			}//end if
-		}//end for(j = 0; j < scene->meshes[j].triangles...)
-	}//End for(i = 0; i < scene->meshcount...)
-	
-	//Check planes
-	for(i = 0; i < scene->planecount; i++){//Check to see if ray intersects any planes
-		if(planeIntersect(&(scene->planes[i]), ray, hit, tmin, tmax) == 1){//ray intersects with plane
-			hitSomething = 1;
-			tmax = hit->t;
-		}//endif
-	}//end for (i = 0; i < scene->planecount...)
-	
-	return hitSomething;
+	VectorSub(refl, refl, dir);
 }
 
 //Find the intersection of a ray and a triangle
-__host__ __device__ int triangleIntersect(Triangle *triangle, Ray *ray, HitRecord *hit, float tmin, float tmax){
+__host__ __device__ int triangleIntersect(Triangle *triangle, TriMesh *trimesh, Ray *ray, HitRecord *hit, float tmin, float tmax){
 	float a, b;//Barycentric alpha, beta
 	
 	Vector3f p2subp0 = triangle->p2;//p2-p0
@@ -452,21 +515,22 @@ __host__ __device__ int triangleIntersect(Triangle *triangle, Ray *ray, HitRecor
 	
 	//Now find coordinates of hit
 	hit->t = t;
-	hit->normal = triangle->normal;
+	hit->normal = triangle->n;
 	
 	Vector3f p0contrib = triangle->p0;
 	Vector3f p1contrib = triangle->p1;
 	Vector3f p2contrib = triangle->p2;
 	
-	VectorScale(&p0contrib, a);
-	VectorScale(&p1contrib, b);
-	VectorScale(&p2contrib, (1-a-b));
+	Scale(&p0contrib, a);
+	Scale(&p1contrib, b);
+	Scale(&p2contrib, (1-a-b));
 	
 	hit->pos = p0contrib;
 	VectorAdd(&(hit->pos), &(hit->pos), &p1contrib);
 	VectorAdd(&(hit->pos), &(hit->pos), &p2contrib);
 	
-	hit->material = triangle->material;
+	//hit->material = triangle->material;
+	hit->material = trimesh->material;
 	return 1;
 }
 
@@ -552,8 +616,8 @@ __host__ __device__ void setNormalOfTriangle(Triangle *triangle){
 	v2.x = triangle->p2.x - triangle->p0.x;
 	v2.x = triangle->p2.y - triangle->p0.y;
 	v2.x = triangle->p2.z - triangle->p0.z;
-	CrossProduct(&(triangle->normal), &v1, &v2);
-	Normalize(&(triangle->normal));
+	CrossProduct(&(triangle->n), &v1, &v2);
+	Normalize(&(triangle->n));
 }
 
 //Given three columns representing a matrix, finds the determinant
@@ -697,10 +761,10 @@ void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_
 	ScaleAdd(&(camera->corner), -dist, &W, &(camera->corner));
 	
 	camera->across = U;
-	VectorScale(&(camera->across), right-left);
+	Scale(&(camera->across), right-left);
 	
 	camera->up = V;
-	VectorScale(&(camera->up), top-bottom);
+	Scale(&(camera->up), top-bottom);
 }
 
 //Converts float 0-1 to 0-255
