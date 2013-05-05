@@ -374,7 +374,7 @@ __host__ __device__ int intersectScene(Sphere *d_spheres, Plane *d_planes, Ray *
 //Recursively calls itself on reflective and refractive surfaces
 __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Ray *ray, HitRecord *hit, int spherecount, int planecount, int lightcount, int depth){
 	Vector3f lightPos, lightDir, flippedRay, R;
-	Ray scratchRay;
+	Ray tempRay;
 	HitRecord shadowed;
 	int i;
 	Color3f tempColor;
@@ -388,9 +388,9 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 		//Now check if shadowed
 		Normalize(&lightDir);
 		
-		scratchRay.d = lightDir;
-		scratchRay.o = hit->pos;
-		if(intersectScene(d_spheres, d_planes, &scratchRay, &shadowed, spherecount, planecount, 0.01, sqrtf((lightDir.x * lightDir.x) + (lightDir.y * lightDir.y) + (lightDir.z * lightDir.z))) == 0){//No objects blocking the ray, do light calculation
+		tempRay.d = lightDir;
+		tempRay.o = hit->pos;
+		if(intersectScene(d_spheres, d_planes, &tempRay, &shadowed, spherecount, planecount, 0.01, sqrtf((lightDir.x * lightDir.x) + (lightDir.y * lightDir.y) + (lightDir.z * lightDir.z))) == 0){//No objects blocking the ray, do light calculation
 			//Add diffuse portion
 			shadingColor.r += tempColor.r * hit->material.Kd.r * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
 			shadingColor.g += tempColor.g * hit->material.Kd.g * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
@@ -401,7 +401,7 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 			//lightPos is the position of lightColor
 			//lightRay is the ray from hit to light
 			
-			Reflect(&(scratchRay.d), &(hit->normal), &R);
+			Reflect(&(tempRay.d), &(hit->normal), &R);
 			
 			flippedRay = ray->d;
 			Negate(&flippedRay);
@@ -417,12 +417,12 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 			tempColor.g = 0;
 			tempColor.b = 0;
 			HitRecord reflectHit;
-			scratchRay.o = hit->pos;
-			scratchRay.d = ray->d;
-			Negate(&(scratchRay.d));
-			Reflect(&(scratchRay.d), &(hit->normal), &(scratchRay.d));
-			if(intersectScene(d_spheres, d_planes, &scratchRay, &reflectHit, spherecount, planecount, 0.01, 1000) == 1){
-				getShadingColor(&tempColor, d_spheres, d_planes, d_lights, &scratchRay, &reflectHit, spherecount, planecount, lightcount, depth + 1);
+			tempRay.o = hit->pos;
+			tempRay.d = ray->d;
+			Negate(&(tempRay.d));
+			Reflect(&(tempRay.d), &(hit->normal), &(tempRay.d));
+			if(intersectScene(d_spheres, d_planes, &tempRay, &reflectHit, spherecount, planecount, 0.01, 1000) == 1){
+				getShadingColor(&tempColor, d_spheres, d_planes, d_lights, &tempRay, &reflectHit, spherecount, planecount, lightcount, depth + 1);
 				shadingColor.r += tempColor.r;
 				shadingColor.g += tempColor.g;
 				shadingColor.b += tempColor.b;
@@ -431,30 +431,6 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 	}
 	/*
 	if(depth < MAX_DEPTH){
-		Color3f reflectedColor, refractedColor;
-		InitColor(&reflectedColor, 0, 0, 0);
-		InitColor(&refractedColor, 0, 0, 0);
-		Ray reflectedRay, refractedRay;
-		HitRecord refractHit, reflectHit;
-		
-		//intersectScene(Scene *scene, Ray *ray, HitRecord *hit, float tmin, float tmax)
-		
-		//Find reflective portion
-		if(hit->material.Kr.r > 0 || hit->material.Kr.g > 0 || hit->material.Kr.b > 0){//Surface is reflective
-			c->r = 1;
-			/*
-			reflectedRay.o = hit->pos;
-			reflectedRay.d = ray->d;
-			Negate(&(reflectedRay.d));
-			Reflect(&(reflectedRay.d), &(hit->normal), &(reflectedRay.d));
-				if(intersectScene(d_spheres, d_planes, &reflectedRay, &reflectHit, spherecount, planecount, 0.01, 1000) == 1){//reflected ray hits something
-				getShadingColor(&reflectedColor, d_spheres, d_planes, d_lights, &reflectedRay, &reflectHit, spherecount, planecount, lightcount, depth + 1);//Recursive call to get reflected color
-					c->r = 1;
-					c->r += reflectHit.material.Kr.r * reflectedColor.r;
-					c->g += reflectHit.material.Kr.g * reflectedColor.g;
-					c->b += reflectHit.material.Kr.b * reflectedColor.b;
-				}
-		}//End if reflective
 		//Find refractive portion
 		if(hit->material.Kr.r > 0 || hit->material.Kr.r > 0 || hit->material.Kr.r > 0){//Material has refractive properties
 			c->g = 1;
