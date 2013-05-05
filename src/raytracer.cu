@@ -19,7 +19,7 @@
 #define WIDTH 		1000
 #define HEIGHT 		1000
 #define DEPTH 		32
-#define MAX_DEPTH	5
+#define MAX_DEPTH	1
 
 //__host__ __device__ indicates a function that is run on both the GPU and CPU
 //__global__ indicates a CUDA kernel
@@ -78,7 +78,7 @@ int main(int argc, char *argv[]){
 	Vector3f up;
 	InitVector(&at, 0, 0, 0);
 	InitVector(&up, 1, 0, 0);
-	InitVector(&eye, 0, -10, 0);
+	InitVector(&eye, -6, -9, 2);
 	initCamera(&camera, &eye, &up, &at, 50, 1);//Set up camera
 
 	SDL_Surface *screen;
@@ -89,8 +89,8 @@ int main(int argc, char *argv[]){
 	int keypress = 0;
 	//int totalTris = 0;
 	//int meshcount = 0;
-	int spherecount = 3;
-	int planecount = 2;
+	int spherecount = 4;
+	int planecount = 6;
 	int lightcount = 2;
 	
 	Sphere *spheres 	= (Sphere *)	malloc(sizeof(Sphere) * spherecount);//Scene will have three spheres
@@ -101,20 +101,39 @@ int main(int argc, char *argv[]){
 	InitVector(&(spheres[0].center), 2, 0, 0);
 	InitVector(&(spheres[1].center), 0, 0, 0);
 	InitVector(&(spheres[2].center), -2, 0, 0);
+	InitVector(&(spheres[3].center), 0, 0, 2);
 	
 	spheres[0].radius = 1;
 	spheres[1].radius = 1;
 	spheres[2].radius = 1;
+	spheres[3].radius = 1;
 	
-	InitVector(&(planes[0].p), 0, 0, -2);
-	InitVector(&(planes[0].normal), 0, 0, 1);
+	//Front face
+	InitVector(&(planes[0].p), 0, 10, 0);
+	InitVector(&(planes[0].normal), 0, -1, 0);
 	Normalize(&(planes[0].normal));
-	
-	InitVector(&(planes[1].p), 0, 10, 0);
-	InitVector(&(planes[1].normal), 0, -1, 0);
+	//Left
+	InitVector(&(planes[1].p), -10, 0, 0);
+	InitVector(&(planes[1].normal), 1, 0, 0);
 	Normalize(&(planes[1].normal));
+	//Right
+	InitVector(&(planes[2].p), 10, 0, 0);
+	InitVector(&(planes[2].normal), -1, 0, 0);
+	Normalize(&(planes[2].normal));
+	//Back
+	InitVector(&(planes[3].p), 0, -10, 0);
+	InitVector(&(planes[3].normal), 0, 1, 0);
+	Normalize(&(planes[3].normal));
+	//Bottom
+	InitVector(&(planes[4].p), 0, 0, -2);
+	InitVector(&(planes[4].normal), 0, 0, 1);
+	Normalize(&(planes[4].normal));
+	//Top
+	InitVector(&(planes[5].p), 0, 0, 10);
+	InitVector(&(planes[5].normal), 0, 0, -1);
+	Normalize(&(planes[5].normal));
 	
-	InitVector(&(lights[0].pos), -2, -10, 2);
+	InitVector(&(lights[0].pos), -2, -9, 2);
 	InitColor(&(lights[0].intensity), 25,25,25);
 	InitVector(&(lights[1].pos), 0, 4, 6);
 	InitColor(&(lights[1].intensity), 10,10,15);
@@ -130,10 +149,22 @@ int main(int argc, char *argv[]){
 	m.phong_exp = 10;
 	m.ior = 0;
 	
+	Material mirror;
+	InitColor(&(mirror.Ka), 0, 0, 0);
+	InitColor(&(mirror.Kd), 0, 0, 0);
+	InitColor(&(mirror.Ks), 0, 0, 0);
+	InitColor(&(mirror.Kr), 1, 1, 1);
+	InitColor(&(mirror.Kt), 0, 0, 0);
+	InitColor(&(mirror.Ie), 0, 0, 0);
+	mirror.phong_exp = 10;
+	mirror.ior = 0;
 	
-	InitColor(&(m.Kd), 0.5, 1, 0.5);
 	planes[0].material = m;
 	planes[1].material = m;
+	planes[2].material = m;
+	planes[3].material = m;
+	planes[4].material = m;
+	planes[5].material = m;
 	
 	InitColor(&(m.Kd), 1, 0, 0);
 	spheres[0].material = m;
@@ -141,7 +172,9 @@ int main(int argc, char *argv[]){
 	spheres[1].material = m;
 	InitColor(&(m.Kd), 0, 0, 1);
 	spheres[2].material = m;
-	
+
+	spheres[3].material = mirror;
+
 	//End material
 	
 	//CUDA memory
@@ -191,19 +224,7 @@ int main(int argc, char *argv[]){
 		gettimeofday(&start, NULL);
 
 		//Launch Kernel
-		raytrace<<<numBlocks, threadsPerBlock>>>(
-			(Color3f *)d_CUDA_Output,
-			(Sphere *) d_spheres,
-			(Plane *) d_planes,
-			(PointLight *) d_lights,
-			(Camera *)d_camera,
-			spherecount,
-			planecount,
-			lightcount,
-			WIDTH,
-			HEIGHT,
-			c++
-		);
+		raytrace<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, (Sphere *) d_spheres, (Plane *) d_planes, (PointLight *) d_lights, (Camera *)d_camera, spherecount, planecount, lightcount, WIDTH, HEIGHT, c++);
 		printf("%s\n", cudaGetErrorString(cudaGetLastError()));
 		cudaDeviceSynchronize();//Wait for GPU to finish
 		cudaMemcpy(h_CUDA_Output, d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT, cudaMemcpyDeviceToHost);//Copy results of GPU kernel to host memory
@@ -352,46 +373,62 @@ __host__ __device__ int intersectScene(Sphere *d_spheres, Plane *d_planes, Ray *
 //Get the shading color at a hitting point
 //Recursively calls itself on reflective and refractive surfaces
 __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Ray *ray, HitRecord *hit, int spherecount, int planecount, int lightcount, int depth){
-	Color3f lightColor;
 	Vector3f lightPos, lightDir, flippedRay, R;
-	Ray lightRay;
+	Ray scratchRay;
 	HitRecord shadowed;
-	float lightDist;
 	int i;
+	Color3f tempColor;
 	Color3f shadingColor;//Temporarily store calculated color - prevents double-drawing some shapes and improves render speed
 	InitColor(&shadingColor, 0, 0, 0);
 	
 	//Iterate through lights to find surface shading color
 	for(i = 0; i < lightcount; i++){
-		getLight(d_lights + i, &(hit->pos), &lightPos, &lightDir, &lightColor);
+		getLight(d_lights + i, &(hit->pos), &lightPos, &lightDir, &tempColor);
 		
 		//Now check if shadowed
-		lightDist = sqrtf((lightDir.x * lightDir.x) + (lightDir.y * lightDir.y) + (lightDir.z * lightDir.z));
 		Normalize(&lightDir);
 		
-		lightRay.d = lightDir;
-		lightRay.o = hit->pos;
-		if(intersectScene(d_spheres, d_planes, &lightRay, &shadowed, spherecount, planecount, 0.01, lightDist) == 0){//No objects blocking the ray, do light calculation
+		scratchRay.d = lightDir;
+		scratchRay.o = hit->pos;
+		if(intersectScene(d_spheres, d_planes, &scratchRay, &shadowed, spherecount, planecount, 0.01, sqrtf((lightDir.x * lightDir.x) + (lightDir.y * lightDir.y) + (lightDir.z * lightDir.z))) == 0){//No objects blocking the ray, do light calculation
 			//Add diffuse portion
-			shadingColor.r += lightColor.r * hit->material.Kd.r * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
-			shadingColor.g += lightColor.g * hit->material.Kd.g * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
-			shadingColor.b += lightColor.b * hit->material.Kd.b * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
+			shadingColor.r += tempColor.r * hit->material.Kd.r * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
+			shadingColor.g += tempColor.g * hit->material.Kd.g * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
+			shadingColor.b += tempColor.b * hit->material.Kd.b * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
 			
 			//Add specular portion
 			//lightDir is the normalized vector from hit to light
 			//lightPos is the position of lightColor
 			//lightRay is the ray from hit to light
 			
-			Reflect(&(lightRay.d), &(hit->normal), &R);
+			Reflect(&(scratchRay.d), &(hit->normal), &R);
 			
 			flippedRay = ray->d;
 			Negate(&flippedRay);
 			
-			shadingColor.r += lightColor.r * hit->material.Ks.r * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
-			shadingColor.g += lightColor.g * hit->material.Ks.g * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
-			shadingColor.b += lightColor.b * hit->material.Ks.b * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
+			shadingColor.r += tempColor.r * hit->material.Ks.r * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
+			shadingColor.g += tempColor.g * hit->material.Ks.g * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
+			shadingColor.b += tempColor.b * hit->material.Ks.b * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
 		}//end if(intersectScene() == 0)
 	}//End light shading loop
+	if(depth < MAX_DEPTH){
+		if(hit->material.Kr.r > 0){//Material is reflective
+			tempColor.r = 0;
+			tempColor.g = 0;
+			tempColor.b = 0;
+			HitRecord reflectHit;
+			scratchRay.o = hit->pos;
+			scratchRay.d = ray->d;
+			Negate(&(scratchRay.d));
+			Reflect(&(scratchRay.d), &(hit->normal), &(scratchRay.d));
+			if(intersectScene(d_spheres, d_planes, &scratchRay, &reflectHit, spherecount, planecount, 0.01, 1000) == 1){
+				getShadingColor(&tempColor, d_spheres, d_planes, d_lights, &scratchRay, &reflectHit, spherecount, planecount, lightcount, depth + 1);
+				shadingColor.r += tempColor.r;
+				shadingColor.g += tempColor.g;
+				shadingColor.b += tempColor.b;
+			}
+		}
+	}
 	/*
 	if(depth < MAX_DEPTH){
 		Color3f reflectedColor, refractedColor;
@@ -404,36 +441,28 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 		
 		//Find reflective portion
 		if(hit->material.Kr.r > 0 || hit->material.Kr.g > 0 || hit->material.Kr.b > 0){//Surface is reflective
+			c->r = 1;
+			/*
 			reflectedRay.o = hit->pos;
 			reflectedRay.d = ray->d;
 			Negate(&(reflectedRay.d));
 			Reflect(&(reflectedRay.d), &(hit->normal), &(reflectedRay.d));
-				if(intersectScene(d_spheres, d_planes, d_lights, &reflectedRay, &reflectHit, spherecount, planecount,lightcount, 0.01, 1000) == 1){//reflected ray hits something
-				getShadingColor(
-					&reflectedColor, 
-					d_spheres,
-					d_planes,
-					d_lights,
-					&reflectedRay,
-					&reflectHit,
-					spherecount,
-					planecount,
-					lightcount,
-					depth + 1
-				);//Recursive call to get reflected color
+				if(intersectScene(d_spheres, d_planes, &reflectedRay, &reflectHit, spherecount, planecount, 0.01, 1000) == 1){//reflected ray hits something
+				getShadingColor(&reflectedColor, d_spheres, d_planes, d_lights, &reflectedRay, &reflectHit, spherecount, planecount, lightcount, depth + 1);//Recursive call to get reflected color
+					c->r = 1;
 					c->r += reflectHit.material.Kr.r * reflectedColor.r;
 					c->g += reflectHit.material.Kr.g * reflectedColor.g;
 					c->b += reflectHit.material.Kr.b * reflectedColor.b;
 				}
 		}//End if reflective
-		
 		//Find refractive portion
 		if(hit->material.Kr.r > 0 || hit->material.Kr.r > 0 || hit->material.Kr.r > 0){//Material has refractive properties
+			c->g = 1;
 			refractedRay.o = hit->pos;
 			refractedRay.d = ray->d;
 			Refract(&(ray->d), &(hit->normal), hit->material.ior, &(refractedRay.d));
 			
-			if(intersectScene(d_spheres, d_planes, d_lights, &refractedRay, &refractHit, spherecount, planecount,lightcount, 0.01, 1000) == 1){
+			if(intersectScene(d_spheres, d_planes, &refractedRay, &refractHit, spherecount, planecount, 0.01, 1000) == 1){
 				getShadingColor(
 					&refractedColor, 
 					d_spheres,
@@ -461,10 +490,9 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 					c->g += hit->material.Kt.g * refractedColor.g * factor;
 					c->b += hit->material.Kt.b * refractedColor.b * factor;
 				}
+
 			}//End if(intersectScene())
 		}//End refractive section
-		
-
 		
 	}
 	*/
