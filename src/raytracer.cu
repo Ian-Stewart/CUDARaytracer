@@ -174,40 +174,6 @@ int main(int argc, char *argv[]){
 	//Copy lights
 	cudaMemcpy(d_lights, lights, sizeof(PointLight) * lightcount, cudaMemcpyHostToDevice);
 	
-	//DEBUGGING
-	/*
-	HitRecord outHit;
-	Ray testRay;
-	InitVector(&(testRay.o), 0, -10, 0);
-	InitVector(&(testRay.d), 0, 1, 0);
-
-	float temptmax = 1000;
-	outHit.t = 1000;
-	
-	int i;
-	int hitSomething = 0;
-	float check;
-	
-	printf("\n%i\n",sphereIntersect(&(spheres[1]), &testRay, &outHit, 0.01, temptmax));
-	printf("\nDEBUG: T: %lf Hit coords: %lf %lf %lf Hit Normal: %lf %lf %lf\n", outHit.t, outHit.pos.x, outHit.pos.y, outHit.pos.z, outHit.normal.x, outHit.normal.y, outHit.normal.z);
-	printf("Scene Material Properties\nMaterial KD: %lf %lf %lf\n", outHit.material.Kd.r,outHit.material.Kd.g,outHit.material.Kd.b);
-	
-	printf("\n%i\n",intersectScene(spheres, planes, &testRay, &outHit, spherecount, planecount, 0.01, temptmax));
-	printf("\nDEBUG: T: %lf Hit coords: %lf %lf %lf Hit Normal: %lf %lf %lf\n", outHit.t, outHit.pos.x, outHit.pos.y, outHit.pos.z, outHit.normal.x, outHit.normal.y, outHit.normal.z);
-	printf("Scene Material Properties\nMaterial KD: %lf %lf %lf\n", outHit.material.Kd.r,outHit.material.Kd.g,outHit.material.Kd.b);
-
-	//Free stuff
-	free(spheres);
-	free(planes);
-	free(lights);
-	free(h_CUDA_Output);
-	cudaFree(d_camera);
-	cudaFree(d_planes);
-	cudaFree(d_lights);
-	cudaFree(d_CUDA_Output);
-
-	return -1;
-	*/
 	//End memory copying from host to device
 	
 	if(SDL_Init(SDL_INIT_VIDEO) < 0){
