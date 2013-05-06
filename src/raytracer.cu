@@ -98,10 +98,10 @@ int main(int argc, char *argv[]){
 	PointLight *lights 	= (PointLight *)malloc(sizeof(PointLight) * lightcount);//One light
 	//TriMesh *meshes 	= (TriMesh *)	malloc(sizeof(TriMesh) * 3);//Three trimeshes
 	
-	InitVector(&(spheres[0].center), 2, 0, 0);
-	InitVector(&(spheres[1].center), 0, 0, 0);
-	InitVector(&(spheres[2].center), -2, 0, 0);
-	InitVector(&(spheres[3].center), 0, 0, 2);
+	InitVector(&(spheres[0].center), 2, 0, -0.5);
+	InitVector(&(spheres[1].center), 0, 0, -0.5);
+	InitVector(&(spheres[2].center), -2, 0, -0.5);
+	InitVector(&(spheres[3].center), 0, 0, 1.5);
 	
 	spheres[0].radius = 1;
 	spheres[1].radius = 1;
@@ -172,11 +172,12 @@ int main(int argc, char *argv[]){
 	spheres[1].material = m;
 	InitColor(&(m.Kd), 0, 0, 1);
 	spheres[2].material = m;
-
+	
+	InitColor(&(mirror.Kd),0.75, 0.75, 0.75);
 	spheres[3].material = mirror;
 
 	//End material
-	
+
 	//CUDA memory
 	void* d_camera;
 	//void* d_trimeshes;
@@ -222,13 +223,16 @@ int main(int argc, char *argv[]){
 	
 	while(!keypress){
 		gettimeofday(&start, NULL);
-
+		cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
+		InitVector(&eye, 9 * cos((float)c/100), 9 * sin(((float)c )/100), 0);
+		InitVector(&up, -sin((float)c/100), 0, 0);
+		Normalize(&up);
+		initCamera(&camera, &eye, &up, &at, 50, 1);//Set up camera
 		//Launch Kernel
 		raytrace<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, (Sphere *) d_spheres, (Plane *) d_planes, (PointLight *) d_lights, (Camera *)d_camera, spherecount, planecount, lightcount, WIDTH, HEIGHT, c++);
 		printf("%s\n", cudaGetErrorString(cudaGetLastError()));
 		cudaDeviceSynchronize();//Wait for GPU to finish
 		cudaMemcpy(h_CUDA_Output, d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT, cudaMemcpyDeviceToHost);//Copy results of GPU kernel to host memory
-
 		DrawScreen(screen);//Update the screen
 		while(SDL_PollEvent(&event)){
 			switch(event.type){
@@ -311,8 +315,10 @@ __host__ __device__ int sphereIntersect(Sphere *sphere, Ray *ray, HitRecord *hit
 //Kernel that actually raytraces
 //Size of each array of objects is given by 'x'count integers
 __global__ void raytrace( Color3f *d_CUDA_Output, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Camera *d_camera, int spherecount, int planecount, int lightcount, int w, int h, int c){
+	
 	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
+	
 	Ray cameraRay;
 	InitVector(&(cameraRay.d), 1, 0, 0);
 	float x;
@@ -342,31 +348,26 @@ __global__ void raytrace( Color3f *d_CUDA_Output, Sphere *d_spheres, Plane *d_pl
 }
 
 //Given a ray and a scene, find the closest hiting point
-__host__ __device__ int intersectScene(Sphere *d_spheres, Plane *d_planes, Ray *ray, HitRecord *hit, int spherecount, int planecount, float tmin, float tmax){
+__host__ __device__ int intersectScene(Sphere *spheres, Plane *planes, Ray *ray, HitRecord *hit, int spherecount, int planecount, float tmin, float tmax){
 	int i;
 	int hitSomething = 0;
-	HitRecord tempHit, outHit;
-	tempHit.t = tmax;
-	float temptmax = tmax;
+	HitRecord tempHit;
 	for(i = 0; i < spherecount; i++){
-		if(sphereIntersect(&(d_spheres[i]), ray, &tempHit, tmin, temptmax) == 1){
-			temptmax = tempHit.t;
-			outHit = tempHit;
+		if(sphereIntersect(&(spheres[i]), ray, &tempHit, tmin, tmax) == 1){
+			tmax = tempHit.t;
+			*hit = tempHit;
 			hitSomething = 1;
 		}
 	}
 	//}
 	//Check planes
 	for(i = 0; i < planecount; i++){//Check to see if ray intersects any planes
-		if(planeIntersect(d_planes + i, ray, &tempHit, tmin, temptmax) == 1){//ray intersects with plane
+		if(planeIntersect(planes + i, ray, &tempHit, tmin, tmax) == 1){//ray intersects with plane
 			hitSomething = 1;
-			outHit = tempHit;
-			temptmax = tempHit.t;
+			*hit = tempHit;
+			tmax = tempHit.t;
 		}//endif
 	}//end for (i = 0; i < scene->planecount...)
-	if(hitSomething == 1){
-		*hit = outHit;
-	}
 	return hitSomething;
 }
 
@@ -378,8 +379,8 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 	HitRecord shadowed;
 	int i;
 	Color3f tempColor;
-	Color3f shadingColor;//Temporarily store calculated color - prevents double-drawing some shapes and improves render speed
-	InitColor(&shadingColor, 0, 0, 0);
+	//Color3f shadingColor;//Temporarily store calculated color - prevents double-drawing some shapes and improves render speed
+	//InitColor(&shadingColor, 0, 0, 0);
 	
 	//Iterate through lights to find surface shading color
 	for(i = 0; i < lightcount; i++){
@@ -392,9 +393,9 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 		tempRay.o = hit->pos;
 		if(intersectScene(d_spheres, d_planes, &tempRay, &shadowed, spherecount, planecount, 0.01, sqrtf((lightDir.x * lightDir.x) + (lightDir.y * lightDir.y) + (lightDir.z * lightDir.z))) == 0){//No objects blocking the ray, do light calculation
 			//Add diffuse portion
-			shadingColor.r += tempColor.r * hit->material.Kd.r * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
-			shadingColor.g += tempColor.g * hit->material.Kd.g * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
-			shadingColor.b += tempColor.b * hit->material.Kd.b * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
+			c->r += tempColor.r * hit->material.Kd.r * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
+			c->g += tempColor.g * hit->material.Kd.g * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
+			c->b += tempColor.b * hit->material.Kd.b * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
 			
 			//Add specular portion
 			//lightDir is the normalized vector from hit to light
@@ -406,9 +407,9 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 			flippedRay = ray->d;
 			Negate(&flippedRay);
 			
-			shadingColor.r += tempColor.r * hit->material.Ks.r * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
-			shadingColor.g += tempColor.g * hit->material.Ks.g * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
-			shadingColor.b += tempColor.b * hit->material.Ks.b * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
+			c->r += tempColor.r * hit->material.Ks.r * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
+			c->g += tempColor.g * hit->material.Ks.g * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
+			c->b += tempColor.b * hit->material.Ks.b * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
 		}//end if(intersectScene() == 0)
 	}//End light shading loop
 	if(depth < MAX_DEPTH){
@@ -422,10 +423,10 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 			Negate(&(tempRay.d));
 			Reflect(&(tempRay.d), &(hit->normal), &(tempRay.d));
 			if(intersectScene(d_spheres, d_planes, &tempRay, &reflectHit, spherecount, planecount, 0.01, 1000) == 1){
-				getShadingColor(&tempColor, d_spheres, d_planes, d_lights, &tempRay, &reflectHit, spherecount, planecount, lightcount, depth + 1);
-				shadingColor.r += tempColor.r;
-				shadingColor.g += tempColor.g;
-				shadingColor.b += tempColor.b;
+				//getShadingColor(&tempColor, d_spheres, d_planes, d_lights, &tempRay, &reflectHit, spherecount, planecount, lightcount, MAX_DEPTH);
+				//c->r += tempColor.r;
+				//c->g += tempColor.g;
+				//c->b += tempColor.b;
 			}
 		}
 	}
@@ -473,10 +474,9 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 	}
 	*/
 	//Add in emissive portion of material
-	shadingColor.r += hit->material.Ie.r;
-	shadingColor.g += hit->material.Ie.g;
-	shadingColor.b += hit->material.Ie.b;
-	*c = shadingColor;
+	c->r += hit->material.Ie.r;
+	c->r += hit->material.Ie.g;
+	c->r += hit->material.Ie.b;
 		//Add in ambient light portion
 		//Not currently implemented
 }
