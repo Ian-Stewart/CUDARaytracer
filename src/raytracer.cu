@@ -19,7 +19,7 @@
 #define WIDTH 		1000
 #define HEIGHT 		1000
 #define DEPTH 		32
-#define MAX_DEPTH	1
+#define MAX_DEPTH	4
 
 //__host__ __device__ indicates a function that is run on both the GPU and CPU
 //__global__ indicates a CUDA kernel
@@ -36,11 +36,11 @@ __host__ __device__ float findDeterminant(Vector3f *col0, Vector3f *col1, Vector
 __host__ __device__ inline void InitVector(Vector3f *v, float ix, float iy, float iz);
 __host__ __device__ inline void InitColor(Color3f *c, float ir, float ig, float ib);
 
-__host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Ray *ray, HitRecord *hit, int spherecount, int planecount, int lightcount, int depth);
+__host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Ray *ray, HitRecord *hit, int spherecount, int planecount, int lightcount);
 __host__ __device__ void getLight(PointLight *light, Vector3f *p, Vector3f *pos, Vector3f *lightDir, Color3f *c);
 __host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float y);
-__host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vector3f *refr);
-__host__ __device__ void Reflect(Vector3f *dir, Vector3f *normal, Vector3f *refl);
+__host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vector3f *out);
+__host__ __device__ void Reflect(Vector3f *dir, Vector3f *normal, Vector3f *out);
 __host__ __device__ void VectorAdd(Vector3f *v, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void setNormalOfTriangle(Triangle *triangle);
 __host__ __device__ void VectorSub(Vector3f *v, Vector3f *v1, Vector3f *v2);
@@ -91,7 +91,7 @@ int main(int argc, char *argv[]){
 	//int meshcount = 0;
 	int spherecount = 4;
 	int planecount = 6;
-	int lightcount = 2;
+	int lightcount = 3;
 	
 	Sphere *spheres 	= (Sphere *)	malloc(sizeof(Sphere) * spherecount);//Scene will have three spheres
 	Plane *planes 		= (Plane *)	malloc(sizeof(Plane) * planecount);//One plane
@@ -101,7 +101,7 @@ int main(int argc, char *argv[]){
 	InitVector(&(spheres[0].center), 2, 0, -0.5);
 	InitVector(&(spheres[1].center), 0, 0, -0.5);
 	InitVector(&(spheres[2].center), -2, 0, -0.5);
-	InitVector(&(spheres[3].center), 0, 0, 1.5);
+	InitVector(&(spheres[3].center), 0, -3, 0.5);
 	
 	spheres[0].radius = 1;
 	spheres[1].radius = 1;
@@ -133,10 +133,14 @@ int main(int argc, char *argv[]){
 	InitVector(&(planes[5].normal), 0, 0, -1);
 	Normalize(&(planes[5].normal));
 	
-	InitVector(&(lights[0].pos), -2, -9, 2);
+	InitVector(&(lights[0].pos), 0, 0, 7);
 	InitColor(&(lights[0].intensity), 25,25,25);
-	InitVector(&(lights[1].pos), 0, 4, 6);
+	
+	InitVector(&(lights[1].pos), 0, 4, 3);
 	InitColor(&(lights[1].intensity), 10,10,15);
+	
+	InitVector(&(lights[2].pos), 0, -4.2, 2.5);
+	InitColor(&(lights[2].intensity), 15,10,10);
 	
 	//Test material
 	Material m;
@@ -149,15 +153,15 @@ int main(int argc, char *argv[]){
 	m.phong_exp = 10;
 	m.ior = 0;
 	
-	Material mirror;
-	InitColor(&(mirror.Ka), 0, 0, 0);
-	InitColor(&(mirror.Kd), 0, 0, 0);
-	InitColor(&(mirror.Ks), 0, 0, 0);
-	InitColor(&(mirror.Kr), 1, 1, 1);
-	InitColor(&(mirror.Kt), 0, 0, 0);
-	InitColor(&(mirror.Ie), 0, 0, 0);
-	mirror.phong_exp = 10;
-	mirror.ior = 0;
+	Material glass;
+	InitColor(&(glass.Ka), 0, 0, 0);
+	InitColor(&(glass.Kd), 0, 0, 0);
+	InitColor(&(glass.Ks), 0, 0, 0);
+	InitColor(&(glass.Kr), 0, 0, 0);
+	InitColor(&(glass.Kt), 1, 1, 1);
+	InitColor(&(glass.Ie), 0, 0, 0);
+	glass.phong_exp = 10;
+	glass.ior = 1.45;
 	
 	planes[0].material = m;
 	planes[1].material = m;
@@ -173,9 +177,7 @@ int main(int argc, char *argv[]){
 	InitColor(&(m.Kd), 0, 0, 1);
 	spheres[2].material = m;
 	
-	InitColor(&(mirror.Kd),0.75, 0.75, 0.75);
-	spheres[3].material = mirror;
-
+	spheres[3].material = glass;
 	//End material
 
 	//CUDA memory
@@ -319,26 +321,67 @@ __global__ void raytrace( Color3f *d_CUDA_Output, Sphere *d_spheres, Plane *d_pl
 	int i = (blockIdx.x * blockDim.x) + threadIdx.x;
 	int j = (blockIdx.y * blockDim.y) + threadIdx.y;
 	
-	Ray cameraRay;
-	InitVector(&(cameraRay.d), 1, 0, 0);
+
 	float x;
-	float y; //(x,y) is the coordinate for this point in the image such that 0<=x,y<=1
+	float y; //(x,y) is the coordinate for this point in the image such that 0<={x, y}<=1
 	
 	x = (float) i/ (float) w;
 	y = (float) j/ (float) h;
-	getCameraRay(&cameraRay, d_camera, x, y);//Get the camera ray
+
+	//Used in rendering loop below
+	HitRecord 	hits[MAX_DEPTH];//Array of hit records
+	Ray 		lightRays[MAX_DEPTH + 1];//Array of rays
+	Color3f 	colors[MAX_DEPTH];//Output from iterative ray tracing
+	Color3f 	reflColors[MAX_DEPTH];//Output from reflective stuff
+
+	getCameraRay(&lightRays[0], d_camera, x, y);//Get the camera ray
 	
 	float tmin = 0.001;
 	float tmax = 1000;
-	HitRecord hit;
 
 	d_CUDA_Output[(j * w) + i].r = 0;
 	d_CUDA_Output[(j * w) + i].g = 0;
 	d_CUDA_Output[(j * w) + i].b = 0;
 	Color3f color;
 	InitColor(&color, 0, 0, 0);
-	if(intersectScene(d_spheres, d_planes, &cameraRay, &hit, spherecount, planecount, tmin, tmax) == 1){//Ray hit something in the scene
-		getShadingColor(&color, d_spheres, d_planes, d_lights, &cameraRay, &hit, spherecount, planecount, lightcount, 0);
+	
+	
+	int rayDepth = 0;
+	
+	//Set all colors to black and reflectivity/refractive to 0
+	for(rayDepth = 0; rayDepth < MAX_DEPTH; rayDepth++){
+		InitColor(&colors[rayDepth], 0, 0, 0);
+		InitColor(&reflColors[rayDepth], 0, 0, 0);
+		InitColor(&(hits[rayDepth].material.Kt), 0, 0, 0);
+		InitColor(&(hits[rayDepth].material.Kr), 0, 0, 0);
+	}
+	
+	for(rayDepth = 0; rayDepth < MAX_DEPTH; rayDepth++){
+		if(intersectScene(d_spheres, d_planes, &lightRays[rayDepth], &hits[rayDepth], spherecount, planecount, tmin, tmax) == 1){
+			getShadingColor(&colors[rayDepth], d_spheres, d_planes, d_lights, &lightRays[rayDepth], &hits[rayDepth], spherecount, planecount, lightcount);
+			if(hits[rayDepth].material.Kt.r > 0 || hits[rayDepth].material.Kt.g > 0 || hits[rayDepth].material.Kt.b > 0){//Surface is refractive
+			//Generate refracted ray and store it for next iteration
+				lightRays[rayDepth + 1].o = hits[rayDepth].pos;
+				lightRays[rayDepth + 1].d = lightRays[rayDepth].d;
+				Refract(&(lightRays[rayDepth].d), &(hits[rayDepth].normal), hits[rayDepth].material.ior, &(lightRays[rayDepth + 1].d));
+			} else {
+			rayDepth = MAX_DEPTH;//End recursion
+			}
+			
+			if(hits[rayDepth].material.Kr.r > 0 || hits[rayDepth].material.Kr.g > 0 || hits[rayDepth].material.Kr.b > 0){//Surface is reflective
+				
+			}
+		}
+	}
+	
+	color.r += colors[0].r;
+	color.g += colors[0].g;
+	color.b += colors[0].b;
+	
+	for(rayDepth = 0; rayDepth < MAX_DEPTH-1; rayDepth++){
+		color.r += colors[rayDepth + 1].r * hits[rayDepth].material.Kt.r;// + reflColors[rayDepth].r * hits[rayDepth].material.Kr.r;
+		color.g += colors[rayDepth + 1].g * hits[rayDepth].material.Kt.g;// + reflColors[rayDepth].g * hits[rayDepth].material.Kr.g;
+		color.b += colors[rayDepth + 1].b * hits[rayDepth].material.Kt.b;// + reflColors[rayDepth].b * hits[rayDepth].material.Kr.b;
 	}
 	//Clamp to 1 - causes weird issues if this isn't done
 	if(color.r > 1) color.r = 1;
@@ -373,7 +416,7 @@ __host__ __device__ int intersectScene(Sphere *spheres, Plane *planes, Ray *ray,
 
 //Get the shading color at a hitting point
 //Recursively calls itself on reflective and refractive surfaces
-__host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Ray *ray, HitRecord *hit, int spherecount, int planecount, int lightcount, int depth){
+__host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d_planes, PointLight *d_lights, Ray *ray, HitRecord *hit, int spherecount, int planecount, int lightcount){
 	Vector3f lightPos, lightDir, flippedRay, R;
 	Ray tempRay;
 	HitRecord shadowed;
@@ -397,82 +440,11 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 			c->g += tempColor.g * hit->material.Kd.g * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
 			c->b += tempColor.b * hit->material.Kd.b * fmaxf(VectorDot(&(hit->normal), &lightDir), 0);
 			
-			//Add specular portion
-			//lightDir is the normalized vector from hit to light
-			//lightPos is the position of lightColor
-			//lightRay is the ray from hit to light
-			
-			Reflect(&(tempRay.d), &(hit->normal), &R);
-			
-			flippedRay = ray->d;
-			Negate(&flippedRay);
-			
 			c->r += tempColor.r * hit->material.Ks.r * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
 			c->g += tempColor.g * hit->material.Ks.g * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
 			c->b += tempColor.b * hit->material.Ks.b * pow(fmaxf(0,VectorDot(&R, &flippedRay)),hit->material.phong_exp);
 		}//end if(intersectScene() == 0)
 	}//End light shading loop
-	if(depth < MAX_DEPTH){
-		if(hit->material.Kr.r > 0){//Material is reflective
-			tempColor.r = 0;
-			tempColor.g = 0;
-			tempColor.b = 0;
-			HitRecord reflectHit;
-			tempRay.o = hit->pos;
-			tempRay.d = ray->d;
-			Negate(&(tempRay.d));
-			Reflect(&(tempRay.d), &(hit->normal), &(tempRay.d));
-			if(intersectScene(d_spheres, d_planes, &tempRay, &reflectHit, spherecount, planecount, 0.01, 1000) == 1){
-				//getShadingColor(&tempColor, d_spheres, d_planes, d_lights, &tempRay, &reflectHit, spherecount, planecount, lightcount, MAX_DEPTH);
-				//c->r += tempColor.r;
-				//c->g += tempColor.g;
-				//c->b += tempColor.b;
-			}
-		}
-	}
-	/*
-	if(depth < MAX_DEPTH){
-		//Find refractive portion
-		if(hit->material.Kr.r > 0 || hit->material.Kr.r > 0 || hit->material.Kr.r > 0){//Material has refractive properties
-			c->g = 1;
-			refractedRay.o = hit->pos;
-			refractedRay.d = ray->d;
-			Refract(&(ray->d), &(hit->normal), hit->material.ior, &(refractedRay.d));
-			
-			if(intersectScene(d_spheres, d_planes, &refractedRay, &refractHit, spherecount, planecount, 0.01, 1000) == 1){
-				getShadingColor(
-					&refractedColor, 
-					d_spheres,
-					d_planes,
-					d_lights,
-					&refractedRay,
-					&refractHit,
-					spherecount,
-					planecount,
-					lightcount,
-					depth + 1
-				);//Recursive call
-				
-				//Hack - refracted shading color is made more or less strong depending on the length of the ray through the objects
-				//Seems to make stuff look really nice
-				Vector3f vThroughObj = refractHit.pos;
-				VectorSub(&vThroughObj, &vThroughObj, &(hit->pos));
-				float factor = 1/(sqrtf((vThroughObj.x * vThroughObj.x) + (vThroughObj.y * vThroughObj.y) + (vThroughObj.z * vThroughObj.z)));
-				if(factor > 1){
-					c->r += hit->material.Kt.r * refractedColor.r;
-					c->g += hit->material.Kt.g * refractedColor.g;
-					c->b += hit->material.Kt.b * refractedColor.b;
-				} else {
-					c->r += hit->material.Kt.r * refractedColor.r * factor;
-					c->g += hit->material.Kt.g * refractedColor.g * factor;
-					c->b += hit->material.Kt.b * refractedColor.b * factor;
-				}
-
-			}//End if(intersectScene())
-		}//End refractive section
-		
-	}
-	*/
 	//Add in emissive portion of material
 	c->r += hit->material.Ie.r;
 	c->r += hit->material.Ie.g;
@@ -501,7 +473,7 @@ __host__ __device__ void getLight(PointLight *light, Vector3f *p, Vector3f *pos,
 
 //Refract around a given normal and index of refraction
 //Dir is assumed to be pointing into hit point
-__host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vector3f *refr){
+__host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vector3f *out){
 	float mu;
 	if(VectorDot(normal, dir) < 0){
 		mu = 1/ior;
@@ -519,27 +491,25 @@ __host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vec
 	float sin_thetar = mu*sqrtf(sin_thetai2);
 	float cos_thetar = sqrtf(1 - (sin_thetar * sin_thetar));
 	
-	Vector3f out = *normal;
+	*out = *normal;
 	
 	if(cos_thetai > 0){
-		Scale(&out, (-mu * cos_thetai) + cos_thetar);
-		ScaleAdd(&out, mu, dir, &out);
+		Scale(out, (-mu * cos_thetai) + cos_thetar);
+		ScaleAdd(out, mu, dir, out);
 	} else {
-		Scale(&out, (-mu * cos_thetai) + cos_thetar);
-		ScaleAdd(&out, mu, dir, &out);
+		Scale(out, (-mu * cos_thetai) - cos_thetar);
+		ScaleAdd(out, mu, dir, out);
 	}
 	
-	Normalize(&out);
-	*refr = out;
+	Normalize(out);
 }
 
 //Find a reflected ray given an incoming ray and a surface normal
 //Assumes dir is pointing away from the hit point
-__host__ __device__ void Reflect(Vector3f *dir, Vector3f *normal, Vector3f *refl){
-	Vector3f out = *normal;
-	Scale(&out, 2 * VectorDot(dir, normal));
-	VectorSub(&out, &out, dir);
-	*refl = out;
+__host__ __device__ void Reflect(Vector3f *dir, Vector3f *normal, Vector3f *out){
+	*out = *normal;
+	Scale(out, 2 * VectorDot(dir, normal));
+	VectorSub(out, out, dir);
 }
 
 //Find the intersection of a ray and a triangle
