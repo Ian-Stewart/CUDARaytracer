@@ -11,7 +11,6 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include "raystructs.h"
-#include "raytracer.h"
 
 
 #ifndef PI
