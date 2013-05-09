@@ -96,8 +96,6 @@ int main(int argc, char *argv[]){
 	int lightcount = 3;
 	int tricount = 0;
 	
-	
-	
 	Sphere *spheres 	= (Sphere *)	malloc(sizeof(Sphere) * spherecount);
 	Plane *planes 		= (Plane *)	malloc(sizeof(Plane) * planecount);
 	PointLight *lights 	= (PointLight *)malloc(sizeof(PointLight) * lightcount);
@@ -106,6 +104,8 @@ int main(int argc, char *argv[]){
 	Triangle *triangles;
 	char diamondFile[] = "./Models/BrilliantDiamond.obj";
 	createTriArrayFromFile(&triangles, &tricount, diamondFile);
+	
+	//Lots of hard-coded stuff incoming...
 	
 	spheres[0].radius = 1;
 	spheres[1].radius = 1;
@@ -125,7 +125,7 @@ int main(int argc, char *argv[]){
 	InitVector(&(planes[2].normal), -1, 0, 0);
 	Normalize(&(planes[2].normal));
 	//Back
-	InitVector(&(planes[3].p), 0, -10, 0);
+	InitVector(&(planes[3].p), 0, -5, 0);
 	InitVector(&(planes[3].normal), 0, 1, 0);
 	Normalize(&(planes[3].normal));
 	//Bottom
@@ -140,11 +140,11 @@ int main(int argc, char *argv[]){
 	InitVector(&(lights[0].pos), 1, 8, 1);
 	InitColor(&(lights[0].intensity), 25,25,25);
 	
-	InitVector(&(lights[0].pos), 5, 7, 5);
-	InitColor(&(lights[1].intensity), 25,20,20);
+	InitVector(&(lights[1].pos), 5, -3, 5);
+	InitColor(&(lights[1].intensity), 15,12,12);
 	
-	InitVector(&(lights[0].pos), -5, 7, 5);
-	InitColor(&(lights[2].intensity), 15,15,25);
+	InitVector(&(lights[1].pos), 5, -3, -5);
+	InitColor(&(lights[2].intensity), 10,12,15);
 	
 	//Test material
 	Material m;
@@ -195,6 +195,8 @@ int main(int argc, char *argv[]){
 		triangles[i].material = diamond;
 	}
 	
+	//End hard-coded objects
+	
 	//CUDA memory pointers
 	void* d_camera;
 	void* d_spheres;
@@ -233,6 +235,14 @@ int main(int argc, char *argv[]){
 	long time;//no see ha ha ha
 	while(!keypress){
 		gettimeofday(&start, NULL);
+		
+		//Move camera
+		InitVector(&up, cos(M_PI/2 + (float)c/150), 0, -sin(M_PI/2 + (float)c/150));
+		Normalize(&up);
+		InitVector(&eye, 5*cos((float)-c/150), 3, 5*sin((float)-c/150));
+		initCamera(&camera, &eye, &up, &at, 50, 1);//Set up camera
+		cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
+		//End camera movement
 		
 		//Move spheres
 		InitVector(&(spheres[0].center), 3*cos((float)c/100), 			-2, 	3*sin((float)c/100));
