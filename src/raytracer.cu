@@ -20,7 +20,7 @@
 #define WIDTH 		1000
 #define HEIGHT 		1000
 #define DEPTH 		32
-#define MAX_DEPTH	4
+#define MAX_DEPTH	5
 
 //File reading
 void createTriArrayFromFile(Triangle **data, int *tricount, char * filename);
@@ -46,7 +46,6 @@ __host__ __device__ void getCameraRay(Ray *ray, Camera *d_camera, float x, float
 __host__ __device__ void Refract(Vector3f *dir, Vector3f *normal, float ior, Vector3f *out);
 __host__ __device__ void Reflect(Vector3f *dir, Vector3f *normal, Vector3f *out);
 __host__ __device__ void VectorAdd(Vector3f *v, Vector3f *v1, Vector3f *v2);
-__host__ __device__ void setNormalOfTriangle(Triangle *triangle);
 __host__ __device__ void VectorSub(Vector3f *v, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void ScaleAdd(Vector3f *v0, float s, Vector3f *v1, Vector3f *v2);
 __host__ __device__ void Normalize(Vector3f *v);
@@ -60,6 +59,8 @@ void DrawScreen(SDL_Surface *screen);
 void setpixel(SDL_Surface *screen, int x, int y, Uint8 r, Uint8 g, Uint8 b);
 void initCamera(Camera *camera, Vector3f *in_eye, Vector3f *in_up, Vector3f *in_at, float in_fovy, float ratio);
 unsigned int floatToUint(float f);
+void setNormalOfTriangle(Triangle *triangle);
+
 
 Camera camera;
 int mouse_old_x;//Old mouse position
@@ -82,7 +83,7 @@ int main(int argc, char *argv[]){
 	Vector3f up;
 	InitVector(&at, 0, 0, 0);
 	InitVector(&up, 1, 0, 0);
-	InitVector(&eye, -6, -9, 2);
+	InitVector(&eye, 0, 3, 6);
 	initCamera(&camera, &eye, &up, &at, 50, 1);//Set up camera
 
 	SDL_Surface *screen;
@@ -90,7 +91,7 @@ int main(int argc, char *argv[]){
 	
 	int c = 0;//For basic animation
 	int keypress = 0;
-	int spherecount = 0;
+	int spherecount = 4;
 	int planecount = 6;
 	int lightcount = 3;
 	int tricount = 0;
@@ -103,18 +104,13 @@ int main(int argc, char *argv[]){
 	//Triangle *triangles	= (Triangle *)	malloc(sizeof(Triangle) * tricount);
 	
 	Triangle *triangles;
-	char diamondFile[] = "./Models/Diamond.obj";
+	char diamondFile[] = "./Models/BrilliantDiamond.obj";
 	createTriArrayFromFile(&triangles, &tricount, diamondFile);
 	
-	//InitVector(&(spheres[0].center), 2, 4, -0.5);
-	//InitVector(&(spheres[1].center), 2, -4, -0.5);
-	//InitVector(&(spheres[2].center), -2, -4, -0.5);
-	//InitVector(&(spheres[3].center), -2, 4, -0.5);
-	
-	//spheres[0].radius = 1;
-	//spheres[1].radius = 1;
-	//spheres[2].radius = 1;
-	//spheres[3].radius = 1;
+	spheres[0].radius = 1;
+	spheres[1].radius = 1;
+	spheres[2].radius = 1;
+	spheres[3].radius = 1;
 	
 	//Front face
 	InitVector(&(planes[0].p), 0, 10, 0);
@@ -141,14 +137,14 @@ int main(int argc, char *argv[]){
 	InitVector(&(planes[5].normal), 0, 0, -1);
 	Normalize(&(planes[5].normal));
 	
-	InitVector(&(lights[0].pos), 0, 0, -7);
+	InitVector(&(lights[0].pos), 1, 8, 1);
 	InitColor(&(lights[0].intensity), 25,25,25);
 	
-	InitVector(&(lights[1].pos), 0, 4, -6);
-	InitColor(&(lights[1].intensity), 25,25,25);
+	InitVector(&(lights[0].pos), 5, 7, 5);
+	InitColor(&(lights[1].intensity), 25,20,20);
 	
-	InitVector(&(lights[2].pos), 0, -4.2, -6);
-	InitColor(&(lights[2].intensity), 25,25,25);
+	InitVector(&(lights[0].pos), -5, 7, 5);
+	InitColor(&(lights[2].intensity), 15,15,25);
 	
 	//Test material
 	Material m;
@@ -173,22 +169,25 @@ int main(int argc, char *argv[]){
 	
 	Material diamond = glass;
 	diamond.ior = 2.417;
+	InitColor(&(diamond.Kt), 1,1,1);
 	
+	//InitColor(&(m.Ie), 0.3,0.3,0.3);
 	planes[0].material = m;
 	planes[1].material = m;
 	planes[2].material = m;
 	planes[3].material = m;
 	planes[4].material = m;
 	planes[5].material = m;
-	
+	//InitColor(&(m.Ie), 0, 0, 0);
+
 	
 	InitColor(&(m.Kd), 1, 0, 0);
-	//spheres[0].material = m;
+	spheres[0].material = m;
 	InitColor(&(m.Kd), 0, 1, 0);
-	//spheres[1].material = m;
+	spheres[1].material = m;
 	InitColor(&(m.Kd), 0, 0, 1);
-	//spheres[2].material = m;
-	//spheres[3].material = glass;
+	spheres[2].material = m;
+	spheres[3].material = glass;
 	
 	//Set up diamond properties
 	int i;
@@ -196,30 +195,29 @@ int main(int argc, char *argv[]){
 		triangles[i].material = diamond;
 	}
 	
-	//CUDA memory
+	//CUDA memory pointers
 	void* d_camera;
 	void* d_spheres;
 	void* d_planes;
 	void* d_triangles;
 	void* d_lights;
 	
+	//Allocate memory on GPU
 	cudaMalloc(&d_camera, sizeof(Camera));//Allocate memory for camera on host
 	cudaMalloc(&d_spheres, sizeof(Sphere) * spherecount);//Allocate mem for spheres
 	cudaMalloc(&d_planes, sizeof(Plane) * planecount);
 	cudaMalloc(&d_lights, sizeof(PointLight) * lightcount);//For lights
-	cudaMalloc(&d_triangles, sizeof(Triangle) * tricount);//For triangles. No accelleration structure
+	cudaMalloc(&d_triangles, sizeof(Triangle) * tricount);//For triangles. No extra structures to speed intersection checking currently implemented
 	
 	//Begin copying from host to device
 	//Copy camera
 	cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
 	//Copy planes
 	cudaMemcpy(d_planes, planes, sizeof(Plane) * planecount, cudaMemcpyHostToDevice);
-	//Copy spheres
-	cudaMemcpy(d_spheres, spheres, sizeof(Sphere) * spherecount, cudaMemcpyHostToDevice);
-	//Copy lights
-	cudaMemcpy(d_lights, lights, sizeof(PointLight) * lightcount, cudaMemcpyHostToDevice);
 	//Copy triangles
 	cudaMemcpy(d_triangles, triangles, sizeof(Triangle) * tricount, cudaMemcpyHostToDevice);
+	//Copy lights
+	cudaMemcpy(d_lights, lights, sizeof(PointLight) * lightcount, cudaMemcpyHostToDevice);
 	
 	//End memory copying from host to device
 	
@@ -235,15 +233,21 @@ int main(int argc, char *argv[]){
 	long time;//no see ha ha ha
 	while(!keypress){
 		gettimeofday(&start, NULL);
-		cudaMemcpy(d_camera, &camera, sizeof(Camera), cudaMemcpyHostToDevice);
-		//InitVector(&eye,  2 * cos((float)c/20) - 2, 8, -1.5);
-		InitVector(&eye, 6, 1, 0);
-		InitVector(&up, 0, 0, 1);
-		Normalize(&up);
-		initCamera(&camera, &eye, &up, &at, 50, 1);//Set up camera
+		
+		//Move spheres
+		InitVector(&(spheres[0].center), 3*cos((float)c/100), 			-2, 	3*sin((float)c/100));
+		InitVector(&(spheres[1].center), 3*cos(M_PI/2 + (float)c/100), 		-2, 	3*sin(M_PI/2 + (float)c/100));
+		InitVector(&(spheres[2].center), 3*cos(M_PI + (float)c/100), 		-2, 	3*sin(M_PI + (float)c/100));
+		InitVector(&(spheres[3].center), 3*cos((3*M_PI)/2 + (float)c/100), 	-2, 	3*sin((3*M_PI)/2 + (float)c/100));
+		//End sphere movement
+		
+		//Copy new sphere data to GPU
+		cudaMemcpy(d_spheres, spheres, sizeof(Sphere) * spherecount, cudaMemcpyHostToDevice);
+
+		
 		//Launch Kernel
 		raytrace<<<numBlocks, threadsPerBlock>>>((Color3f *)d_CUDA_Output, (Sphere *) d_spheres, (Plane *) d_planes, (Triangle *) d_triangles, (PointLight *) d_lights, (Camera *)d_camera, spherecount, planecount, tricount, lightcount, WIDTH, HEIGHT, c++);
-		printf("%s\n", cudaGetErrorString(cudaGetLastError()));
+		//printf("%s\n", cudaGetErrorString(cudaGetLastError()));
 		cudaDeviceSynchronize();//Wait for GPU to finish
 		cudaMemcpy(h_CUDA_Output, d_CUDA_Output, sizeof(Color3f) * WIDTH * HEIGHT, cudaMemcpyDeviceToHost);//Copy results of GPU kernel to host memory
 		DrawScreen(screen);//Update the screen
@@ -261,7 +265,48 @@ int main(int argc, char *argv[]){
 		time = (long) (end.tv_usec - start.tv_usec);
 		printf("Frame took %lu msec (FPS: %lu)\n", time/1000, 1000000/time);
 	}//End while(!keypress)
+	
+	//Free memory on GPU
+	cudaFree(d_camera);
+	cudaFree(d_spheres);
+	cudaFree(d_lights);
+	cudaFree(d_planes);
+	cudaFree(d_triangles);
+	cudaFree(d_CUDA_Output);
+	
+	//Free other pointers
+	free(spheres);
+	free(planes);
+	free(lights);
+	free(screen);
+	free(triangles);
+	free(h_CUDA_Output);
 	return 0;
+}
+
+//Used when setting up a trimesh. Given three points, finds the normal
+void setNormalOfTriangle(Triangle *triangle){
+	Vector3f v1;
+	Vector3f v2;
+	//v1 = p1 - p0
+	v1.x = triangle->p0.x - triangle->p1.x;
+	v1.y = triangle->p0.y - triangle->p1.y;
+	v1.z = triangle->p0.z - triangle->p1.z;
+	//v2 = p2 - p0
+	v2.x = triangle->p0.x - triangle->p2.x;
+	v2.y = triangle->p0.y - triangle->p2.y;
+	v2.z = triangle->p0.z - triangle->p2.z;
+	CrossProduct(&(triangle->n), &v1, &v2);
+	Normalize(&(triangle->n));
+	/*
+	printf("V1: (%f, %f, %f)\nV2: (%f, %f, %f)\nN: (%f, %f, %f)\nP0: (%f, %f, %f)\nP1: (%f, %f, %f)\nP2: (%f, %f, %f)\n",
+		v1.x, v1.y, v1.z,
+		v2.x, v2.y, v2.z,
+		triangle->n.x,triangle->n.y,triangle->n.z,
+		triangle->p0.x, triangle->p0.y, triangle->p0.z,
+		triangle->p1.x, triangle->p1.y, triangle->p1.z,
+		triangle->p2.x, triangle->p2.y, triangle->p2.z
+	);*/
 }
 
 //Find the intersection of a sphere and a ray, if it exists
@@ -475,8 +520,8 @@ __host__ __device__ void getShadingColor(Color3f *c, Sphere *d_spheres, Plane *d
 	}//End light shading loop
 	//Add in emissive portion of material
 	c->r += hit->material.Ie.r;
-	c->r += hit->material.Ie.g;
-	c->r += hit->material.Ie.b;
+	c->g += hit->material.Ie.g;
+	c->b += hit->material.Ie.b;
 		//Add in ambient light portion
 		//Not currently implemented
 }
@@ -613,22 +658,6 @@ __host__ __device__ int planeIntersect(Plane *plane, Ray *ray, HitRecord *hit, f
 	return 1;
 }
 
-//Used when setting up a trimesh. Given three points, finds the normal
-__host__ __device__ void setNormalOfTriangle(Triangle *triangle){
-	Vector3f v1;
-	Vector3f v2;
-	//v1 = p1 - p0
-	v1.x = triangle->p0.x - triangle->p1.x;
-	v1.y = triangle->p0.y - triangle->p1.y;
-	v1.z = triangle->p0.z - triangle->p1.z;
-	//v2 = p2 - p0
-	v2.x = triangle->p0.x - triangle->p2.x;
-	v2.y = triangle->p0.y - triangle->p2.y;
-	v2.z = triangle->p0.z - triangle->p2.z;
-	CrossProduct(&(triangle->n), &v1, &v2);
-	Normalize(&(triangle->n));
-}
-
 //Given three columns representing a matrix, finds the determinant
 __host__ __device__ float findDeterminant(Vector3f *col0, Vector3f *col1, Vector3f *col2){
 	return 
@@ -667,7 +696,7 @@ __host__ __device__ float VectorDot(Vector3f *v, Vector3f *u){
 //v1 x v2 = |{{i,j,k},{v1.x,v1.y,v1.z},{v2.x,v2.y,v2.z}}|
 __host__ __device__ void CrossProduct(Vector3f *out, Vector3f *v1, Vector3f *v2){
 	out->x = (v1->y * v2->z) - (v1->z * v2->y);
-	out->y = -(v1->x * v2->z) - (v1->z * v2->x);
+	out->y = -((v1->x * v2->z) - (v1->z * v2->x));
 	out->z = (v1->x * v2->y) - (v1->y * v2->x);
 }
 
@@ -835,36 +864,25 @@ Vector3f *vertices;
 int numberOfFaces;
 int numberOfVertices;
 
-//caclulates the normal of a triangle of three points outputs through the first argument
-void calcNormal(Vector3f *n, Vector3f *p1, Vector3f *p2, Vector3f *p3){
-	Vector3f one;
-	Vector3f two;
-	VectorSub(&one, p1, p2);
-	VectorSub(&two, p1, p3);
-	CrossProduct(n, &one, &two);
-
-}
-
 //takes a face value and outputs a triangle outputs through the first argument
 void triangulate(Triangle *out, int *face){
 	out->p0 = vertices[face[0]];
 	out->p1 = vertices[face[1]];
 	out->p2 = vertices[face[2]];
-	calcNormal(&(out->n), &(out->p0), &(out->p1), &(out->p2));
+	setNormalOfTriangle(out);
 }
 
 //sets the size of the local int ** for faces
 void setFacesSize(){
-	faces = (int **)malloc(sizeof(int*) * numberOfFaces);
+	faces = (int **)malloc(sizeof(int*) * (numberOfFaces));
 	for(int i = 0; i < numberOfFaces; i++){
 		faces[i] = (int *)malloc( sizeof(int) * 3 );
 	}
-	faces[9][0] = 1;
 }
 
 //sets the size of the local Vector3f * for vertices
 void setVerticesSize(){
-	vertices = (Vector3f*)malloc( sizeof(Vector3f) * numberOfVertices);
+	vertices = (Vector3f*)malloc( sizeof(Vector3f) * (numberOfVertices + 1));
 }
 
 /*read through the file once to determine the number of vertices and faces
@@ -901,7 +919,7 @@ void setFileSize(char filename[]){
 /*reads through the file specified populating the local arrays with their contents*/ 
 void readInObject(char * filename){
 	int currentFace = 0;
-	int currentVertex = 0;
+	int currentVertex = 1;
 	FILE *file = fopen(filename, "r");
 
 	if(file != NULL){
@@ -911,12 +929,15 @@ void readInObject(char * filename){
 				//assign values to the array then increment
 				//need to go over pointer logic here!!!!!!!!!!!!!!!!!!!!!!!!!!
 				sscanf(line, "%*s %f %f %f", &(vertices[currentVertex].x), &(vertices[currentVertex].y), &(vertices[currentVertex].z));
+				//printf("%f %f %f\n", vertices[currentVertex].x, vertices[currentVertex].y, vertices[currentVertex].z);
 				currentVertex++;
 			}
 			if(line[0] == 'f'){
 				//assign values to the array then increment
 				sscanf(line, "%*s %d %d %d", &(faces[currentFace][0]), &(faces[currentFace][1]), &(faces[currentFace][2]));
+				//printf("%i - %i %i %i\n", currentFace, faces[currentFace][0], faces[currentFace][1], faces[currentFace][2]);
 				currentFace++;
+				
 			}
 		}
 	}
@@ -946,11 +967,11 @@ void createSquareFace(Triangle * t1, Triangle * t2, Vector3f v1, Vector3f v2, Ve
 	t1->p1 = v2;
 	t1->p2 = v4;
 	//May need to correct pointer logic in this method!!!!!!!!!!!!!!!!!!!1
-	calcNormal(&(t1->n), &v1, &v2, &v4);
+	//calcNormal(&(t1->n), &v1, &v2, &v4);
 	t2->p0 = v3;
 	t2->p1 = v4;
 	t2->p2 = v2;
-	calcNormal(&(t1->n), &v3, &v4, &v2);
+	//calcNormal(&(t1->n), &v3, &v4, &v2);
 }
 
 //creates a bounding box around the object read in from file
@@ -1013,13 +1034,9 @@ void createTriArrayFromFile(Triangle **data, int *tricount, char * filename){
 		//printf("before triangluate %d\n", i);
 		triangulate(&(triangles[i]), faces[i]);
 	}
-	//printf("triangles created\n");
+	printf("Faces: %i Verts: %i\n", numberOfFaces, numberOfVertices);
 	*tricount = numberOfFaces;
 	*data = triangles;
-	//printf("length %d\n", numberOfFaces);
-	
-	//createBoundingBox(bb);
-	//printf("bounding box created\n");
 	free(faces);
 	free(vertices);
 }
