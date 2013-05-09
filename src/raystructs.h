@@ -30,6 +30,9 @@ typedef struct {
 	Vector3f p0,p1,p2;
 	//Normal of triangle
 	Vector3f n;
+	//Material of triangle. Bad for memory use, but this feature was added fairly late anyways...
+	Material material;
+	
 } Triangle;
 
 //A sphere defined by center and radius
@@ -41,13 +44,6 @@ typedef struct {
 	//Material
 	Material material;
 } Sphere;
-
-//A triangle mesh
-//These are generated from .obj files
-typedef struct {
-	Material material;
-	int triangles;
-} TriMesh;
 
 //A plane
 //Defines an infinite plane
