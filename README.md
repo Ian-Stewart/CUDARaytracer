@@ -5,7 +5,7 @@ Final project for CS 473 Computer Graphics. Raytracer written in CUDA/SDL
 
 Functional but very ugly
 
-To compile
+To compile (from terminal in root of project directory)
 
     nvcc ./src/raytracer.cu -o ./bin/raytracer -lSDL -arch sm_30
 
