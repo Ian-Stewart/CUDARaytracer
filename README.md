@@ -3,13 +3,14 @@ CUDA Raytracer
 
 Final project for CS 473 Computer Graphics. Raytracer written in CUDA/SDL
 
-Not complete. Still in very early stages.
+Functional but very ugly
 
 To compile
 
     nvcc ./src/raytracer.cu -o ./bin/raytracer -lSDL -arch sm_30
 
 -lSDL is for SDL graphics
+
 -arch sm_30 is required for recursion
 
 Note: nvcc does not like gcc 4.6+. To successfully compile, you will need to install an older version of gcc or modify your cuda host_config.h. To get nvcc to work, change the line
