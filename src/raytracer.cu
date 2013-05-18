@@ -307,15 +307,6 @@ void setNormalOfTriangle(Triangle *triangle){
 	v2.z = triangle->p0.z - triangle->p2.z;
 	CrossProduct(&(triangle->n), &v1, &v2);
 	Normalize(&(triangle->n));
-	/*
-	printf("V1: (%f, %f, %f)\nV2: (%f, %f, %f)\nN: (%f, %f, %f)\nP0: (%f, %f, %f)\nP1: (%f, %f, %f)\nP2: (%f, %f, %f)\n",
-		v1.x, v1.y, v1.z,
-		v2.x, v2.y, v2.z,
-		triangle->n.x,triangle->n.y,triangle->n.z,
-		triangle->p0.x, triangle->p0.y, triangle->p0.z,
-		triangle->p1.x, triangle->p1.y, triangle->p1.z,
-		triangle->p2.x, triangle->p2.y, triangle->p2.z
-	);*/
 }
 
 //Find the intersection of a sphere and a ray, if it exists
